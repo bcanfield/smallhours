@@ -87,9 +87,12 @@ mean nothing is red when the maintainer opens the PR.
 
 ## Security posture (ADR 0001)
 
-Sandbox is the boundary: `claude -p --dangerously-skip-permissions` inside an
-egress domain allowlist (native bubblewrap sandbox preferred; reference
-devcontainer firewall as fallback — 1h spike required to pick). Ephemeral
+Sandbox is the boundary: `claude -p --permission-mode acceptEdits` (with managed
+`sandbox.enabled` + `autoAllowBashIfSandboxed`) inside an egress domain
+allowlist — **not** `--dangerously-skip-permissions`, which spike 0a proved
+disables the sandbox (see ADR 0001 addendum). Native bubblewrap on the hosted
+runner VM, confirmed working on `ubuntu-24.04` with the required `bwrap`
+AppArmor profile; the iptables firewall fallback was not needed. Ephemeral
 runner, repo-scoped 1-hour App token, secret-scanning push protection enabled,
 human review before merge. Operational rule: only label issues you wrote or
 fully understand. Residual risks accepted: injected code can read the runner
@@ -143,7 +146,10 @@ issues.
 
 ## Open items
 
-- Phase 1 spike: bubblewrap egress allowlist on a hosted runner (fallback:
-  `init-firewall.sh` iptables on the VM — never inside a container job).
-- Phase 1 spike: job-level `concurrency:` semantics inside called reusable
-  workflows (fallback: concurrency declared in stubs).
+- ~~Phase 1 spike: bubblewrap egress allowlist on a hosted runner.~~ **Resolved
+  2026-07-17** (run `29605252082`): bubblewrap contains egress on `ubuntu-24.04`
+  with the `bwrap` AppArmor profile; the decisive change is `--permission-mode
+  acceptEdits` over `--dangerously-skip-permissions`. See ADR 0001 addendum.
+- ~~Phase 1 spike: job-level `concurrency:` inside called reusable workflows.~~
+  **Resolved 2026-07-17**: runs serialize when the group is declared in the
+  called workflow; stubs stay thin (ADR 0002 holds).

@@ -12,6 +12,16 @@ sandbox must never read as a proven one.
 
 ## 0a — Sandbox egress on a hosted runner
 
+> **RESOLVED 2026-07-17** (run `29605252082`). Egress *is* containable on
+> `ubuntu-24.04`, but **not** with the invocation the plan originally specified.
+> `--dangerously-skip-permissions` disables the Bash sandbox (it bypasses the
+> permission decision that invokes the bwrap wrapper); `--permission-mode
+> acceptEdits` + `sandbox.enabled` + `autoAllowBashIfSandboxed` contains it
+> cleanly and stays unattended-safe. bubblewrap works with the required `bwrap`
+> AppArmor profile; the iptables fallback was not needed. Full write-up:
+> **ADR 0001 addendum**. The workflow is kept as a re-runnable regression guard
+> (Probe A must leak, Probe B must contain).
+
 **Question:** can we contain Claude Code's network egress on `ubuntu-latest`,
 and which settings keys are actually load-bearing?
 
@@ -77,6 +87,11 @@ rather than just its Bash tool — is the obvious answer if we need one boundary
 covering every tool. Out of scope here; noted for the addendum.
 
 ## 0b — Concurrency inside a called reusable workflow
+
+> **RESOLVED 2026-07-17.** Runs serialized (`START/END/START/END`, no overlap,
+> neither event dropped) with concurrency declared *only* in the called
+> workflow. ADR 0002 holds: the group stays behind the tag, stubs stay thin. No
+> fallback needed.
 
 **Question:** does job-level `concurrency:` take effect when declared inside a
 *called* reusable workflow, or only in the caller?
