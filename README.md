@@ -1,4 +1,4 @@
-# claude-auto
+# smallhours
 
 An autonomous issue → PR system: the maintainer grills issues (externally) and
 reviews PRs; everything between — implementation, draft PR, state management,

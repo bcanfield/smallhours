@@ -1,4 +1,4 @@
-# claude-auto — Implementation Plan
+# smallhours — Implementation Plan
 
 Build plan for the system specified in `DESIGN.md`. Read that first; this doc
 assumes its vocabulary (`CONTEXT.md`) and decisions (`adr/`). Milestones are
@@ -8,7 +8,7 @@ bring back to the maintainer, not a license to redesign.
 
 ## Prerequisites (human, one-time)
 
-- [ ] Create the public **toolkit repo** (working name: `claude-auto`).
+- [ ] Create the public **toolkit repo** (working name: `smallhours`).
 - [ ] Claude subscription token: `claude setup-token` → note it for per-repo
       secret `CLAUDE_CODE_OAUTH_TOKEN` (1-year expiry — calendar a renewal).
 - [ ] Create the **Fixer GitHub App**: Repository permissions Contents R/W,
@@ -41,7 +41,7 @@ the second run queues (not parallel, not lost).
 ## Milestone 1 — Toolkit repo skeleton
 
 ```
-claude-auto/
+smallhours/
 ├── README.md
 ├── CONTEXT.md, docs/…                  # this design corpus moves in
 ├── versions.env                        # CLAUDE_CODE_VERSION, GH_VERSION, … (future Dockerfile input)
@@ -62,7 +62,7 @@ template repository.
 ## Milestone 2 — Portable scripts (Phase 1 set)
 
 Each script: bash, `gh` + `jq` only, repo-agnostic, config from
-`.claude-auto.yml` (defaults baked into `lib/config.sh`). All state mutations
+`.smallhours.yml` (defaults baked into `lib/config.sh`). All state mutations
 go through `lib/state.sh`, which enforces the exactly-one-state-label
 invariant (replace, never accumulate).
 
@@ -107,7 +107,7 @@ Acceptance: all Phase 1 transitions fire from a stub-equipped test repo.
   permissions ceiling, one `uses: …/agent-loop.yml@v1`, secret wiring
   (`CLAUDE_CODE_OAUTH_TOKEN`, `AGENT_APP_ID`, `AGENT_APP_PRIVATE_KEY`).
 - `setup-repo.sh <owner/repo>`: install Fixer App on the repo; push stub +
-  default `.claude-auto.yml`; create the label vocabulary (both axes); branch
+  default `.smallhours.yml`; create the label vocabulary (both axes); branch
   protection (require PR, 1 approval, CI check, up-to-date); enable
   secret-scanning push protection; verify a CI workflow exists (warn if not —
   the loop keys off it).
@@ -152,7 +152,7 @@ GitLab port (CI/CD component + webhook→pipeline-trigger bridge + schedules) ·
 self-hosted runtime · GHCR image built from `versions.env` (ADR 0002) ·
 issue-comment grilling bot · model auto-escalation.
 
-## Consumer config schema (`.claude-auto.yml`, all keys optional)
+## Consumer config schema (`.smallhours.yml`, all keys optional)
 
 ```yaml
 version: 1
