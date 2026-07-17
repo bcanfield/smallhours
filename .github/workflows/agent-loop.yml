@@ -1,59 +1,286 @@
 # agent-loop — THE reusable workflow. Consumers call it from a thin stub:
 #   jobs.loop.uses: bcanfield/smallhours/.github/workflows/agent-loop.yml@v1
 #
-# ┌─ SKELETON (Milestone 1) ────────────────────────────────────────────────┐
-# │ This file establishes the workflow_call contract and the job-level shape │
-# │ the design depends on (per-issue concurrency proven in spike 0b, ADR      │
-# │ 0002). The event ROUTING and stage jobs are implemented in Milestone 3;   │
-# │ the portable scripts they call are Milestone 2. Until then this is a      │
-# │ callable no-op that echoes the route it *would* take, so a stub can wire  │
-# │ against `@v1` before the brains land.                                     │
-# └──────────────────────────────────────────────────────────────────────────┘
+# It routes each GitHub event to a portable script in scripts/ (Milestone 2).
+# The scripts are the brains; this file is only the runtime adapter: mint the
+# Fixer App token, check out the right repos, and call the right script with
+# explicit arguments. A future GitLab/self-hosted adapter reuses the same
+# scripts with different glue.
 #
-# Routing table (Milestone 3 — DESIGN.md "Transitions"):
-#   issues labeled ready-for-agent                  -> authorize.sh -> implement.sh + open-pr.sh
-#   issues closed / unlabeled while agent-working   -> cancel.sh
-#   pull_request_review changes_requested           -> address-review.sh
-#   workflow_run completed (consumer CI)            -> state-manager.sh (same-repo head + `agent` label)
-#   schedule                                        -> no-op in Phase 1 (sweep in Phase 2)
+# Routing (DESIGN.md "Transitions"):
+#   issues labeled ready-for-agent               -> authorize -> implement (+open-pr, +usage)
+#   issues closed / unlabeled(agent-working)     -> cancel  (T10 / T11)
+#   pull_request_review changes_requested        -> address-review (T7)
+#   workflow_run completed (consumer CI)         -> state-manager (T2 / T3)
+#   schedule                                     -> no-op in Phase 1
+#
+# Self-checkout: jobs that need the toolkit's own files check out
+# ${{ job.workflow_repository }}@${{ job.workflow_sha }} — the EXACT version the
+# consumer invoked (the floating v1 SHA), never drifting from the routing above.
+# (actionlint <= 1.7.x flags job.workflow_repository/workflow_sha as unknown; its
+# schema is stale — these are documented job-context fields. Not a real error.)
 name: agent-loop
 
 on:
   workflow_call:
-    # Consumer config travels in .smallhours.yml (loaded by lib/config.sh in
-    # Milestone 2), not as workflow inputs — so the contract here stays stable
-    # across stages. Secrets the caller must forward are declared in Milestone 3
-    # alongside the jobs that consume them (CLAUDE_CODE_OAUTH_TOKEN, AGENT_APP_ID,
-    # AGENT_APP_PRIVATE_KEY).
-    inputs: {}
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: true
+      AGENT_APP_ID:
+        required: true
+      AGENT_APP_PRIVATE_KEY:
+        required: true
 
-# Narrowest ceiling that still lets Milestone 3 mint the Fixer App token and act
-# on issues/PRs. Per-job permissions get tightened further when the stage jobs
-# land; a reusable workflow cannot exceed the caller stub's declared ceiling.
+# No ambient GITHUB_TOKEN power: every mutation uses the Fixer App token, so
+# each job needs only enough to check out. Per-job perms stay within the stub's
+# ceiling (Milestone 4).
 permissions:
   contents: read
-  issues: write
-  pull-requests: write
-  actions: read
 
 jobs:
-  route:
-    name: route (skeleton)
+  # ── T1 gate: does the labeller have write? Fail-closed inside authorize.sh ──
+  authorize:
+    if: >-
+      github.event_name == 'issues' &&
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'ready-for-agent'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    # Per-issue serialization (spike 0b). Shared with `implement` so a re-label
+    # queues behind the in-flight run instead of racing it. Never cancel.
+    concurrency:
+      group: smallhours-issue-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    outputs:
+      authorized: ${{ steps.gate.outputs.authorized }}
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: token
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .smallhours-toolkit
+      - id: gate
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -uo pipefail
+          if .smallhours-toolkit/scripts/authorize.sh \
+               "${{ github.event.issue.number }}" "${{ github.event.sender.login }}"; then
+            echo "authorized=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "authorized=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── T1 body: implement on agent/issue-N, deterministic draft PR, usage ─────
+  implement:
+    needs: authorize
+    if: needs.authorize.outputs.authorized == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    concurrency:
+      group: smallhours-issue-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: token
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      # Consumer repo = working tree. App-token credentials so the push
+      # re-triggers CI (GITHUB_TOKEN pushes don't — ADR 0001).
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.token.outputs.token }}
+          fetch-depth: 0
+      # Toolkit = scripts + prompts, at the exact invoked version.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .smallhours-toolkit
+      - name: Load pinned versions
+        run: grep -E '^[A-Z_][A-Z0-9_]*=' .smallhours-toolkit/versions.env >> "$GITHUB_ENV"
+      - name: Install yq (pinned)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/yq" \
+            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
+      - name: Provision sandbox (bubblewrap, Claude, managed settings)
+        run: |
+          set -euo pipefail
+          source .smallhours-toolkit/scripts/lib/claude-run.sh
+          claude_run_provision
+      - name: Implement, open draft PR, report usage
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          T=.smallhours-toolkit/scripts
+          issue="${{ github.event.issue.number }}"
+          branch="$("$T/implement.sh" "$issue")"
+          pr="$("$T/open-pr.sh" "$issue" "$branch")"
+          if [ -n "$pr" ]; then
+            "$T/report-usage.sh" "$pr" "${RUNNER_TEMP}/smallhours-result.json" implement
+          fi
+
+  # ── Cancellation: T10 (issue closed mid-run) / T11 (agent-working removed) ──
+  cancel:
+    if: >-
+      github.event_name == 'issues' &&
+      ( github.event.action == 'closed' ||
+        ( github.event.action == 'unlabeled' &&
+          github.event.label.name == 'agent-working' ) )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    concurrency:
+      group: smallhours-issue-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: token
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .smallhours-toolkit
+      - env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          T=.smallhours-toolkit/scripts
+          issue="${{ github.event.issue.number }}"
+          if [ "${{ github.event.action }}" = "closed" ]; then
+            # Only a mid-run close cancels. A normal merge closes the issue from
+            # `in-review`, which must NOT be treated as a cancellation.
+            if gh issue view "$issue" --json labels --jq '.labels[].name' | grep -Fxq agent-working; then
+              "$T/cancel.sh" issue-closed "$issue"
+            else
+              echo "issue #$issue is not agent-working — no cancellation."
+            fi
+          else
+            "$T/cancel.sh" label-removed "$issue"
+          fi
+
+  # ── T7: formal "Request changes" review re-summons the agent ───────────────
+  address_review:
+    if: >-
+      github.event_name == 'pull_request_review' &&
+      github.event.review.state == 'changes_requested'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    concurrency:
+      group: smallhours-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: token
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.token.outputs.token }}
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .smallhours-toolkit
+      - name: Load pinned versions
+        run: grep -E '^[A-Z_][A-Z0-9_]*=' .smallhours-toolkit/versions.env >> "$GITHUB_ENV"
+      - name: Install yq (pinned)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/yq" \
+            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
+      - name: Provision sandbox (bubblewrap, Claude, managed settings)
+        run: |
+          set -euo pipefail
+          source .smallhours-toolkit/scripts/lib/claude-run.sh
+          claude_run_provision
+      - name: Address the requested changes, report usage
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          T=.smallhours-toolkit/scripts
+          pr="${{ github.event.pull_request.number }}"
+          "$T/address-review.sh" "$pr" \
+            "${{ github.event.review.state }}" "${{ github.event.review.user.login }}"
+          "$T/report-usage.sh" "$pr" "${RUNNER_TEMP}/smallhours-result.json" address_review
+
+  # ── T2 / T3: consumer CI outcome drives PR/issue state ─────────────────────
+  # Hard gate (DESIGN): same-repo head. The `agent`-label check is enforced
+  # inside state-manager.sh so a red CI on a human PR never summons anything.
+  ci_state:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      contains(fromJSON('["success","failure","timed_out"]'), github.event.workflow_run.conclusion)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    concurrency:
+      group: smallhours-ci-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: token
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .smallhours-toolkit
+      - env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          T=.smallhours-toolkit/scripts
+          case "${{ github.event.workflow_run.conclusion }}" in
+            success) ci=success ;;
+            *)       ci=failure ;;
+          esac
+          # Resolve the PR: the event's association first, else by head branch.
+          pr="$(jq -r '.workflow_run.pull_requests[0].number // empty' "$GITHUB_EVENT_PATH")"
+          if [ -z "$pr" ]; then
+            pr="$(gh pr list --head "${{ github.event.workflow_run.head_branch }}" \
+                    --state open --json number --jq '.[0].number' 2>/dev/null || true)"
+          fi
+          if [ -z "$pr" ]; then
+            echo "No open PR for ${{ github.event.workflow_run.head_branch }} — nothing to do."
+            exit 0
+          fi
+          "$T/state-manager.sh" "$pr" "$ci"
+
+  # ── schedule: no-op in Phase 1 (becomes the sweep in Phase 2) ──────────────
+  schedule_noop:
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-
-    # Per-issue serialization, declared HERE in the called workflow so it
-    # upgrades behind the floating tag (spike 0b confirmed this works; ADR 0002).
-    # Queue, never cancel: a half-finished implementation run must not be killed
-    # mid-push. github.event.issue.number is empty for non-issue events, which
-    # collapses those to one shared group — Milestone 3 refines the key per route.
-    concurrency:
-      group: smallhours-issue-${{ github.event.issue.number || github.run_id }}
-      cancel-in-progress: false
-
     steps:
-      - name: Announce the route (no-op until Milestone 3)
-        run: |
-          echo "smallhours agent-loop skeleton — event: ${{ github.event_name }}"
-          echo "Routing + stage jobs are implemented in Milestone 3."
-          echo "This callable no-op exists so a consumer stub can pin @v1 today."
+      - run: |
+          echo "smallhours: Phase 1 has no scheduled work. Phase 2 wires this to the sweep."

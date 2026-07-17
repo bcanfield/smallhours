@@ -108,7 +108,18 @@ invariant (replace, never accumulate).
 Acceptance: each script runnable locally against a test repo with only
 `GH_TOKEN` + config env set (this is the self-hosted portability contract).
 
-## Milestone 3 — `agent-loop.yml` reusable workflow
+## Milestone 3 — `agent-loop.yml` reusable workflow — ✅ DONE 2026-07-17
+
+> Full routing workflow built (replaces the M1 skeleton): per-route jobs mint
+> the Fixer App token, self-check-out the toolkit at the exact invoked version
+> via `job.workflow_repository`@`job.workflow_sha` (verified against GitHub's
+> contexts reference — actionlint ≤1.7.x flags these on a stale schema; false
+> positive), and call the M2 scripts. authorize→implement `needs:` split;
+> per-issue/-PR/-branch `concurrency` (spike 0b); timeouts 40m implement /
+> address-review, 15m others; schedule no-op. Stub secret-wiring uncommented so
+> the call validates. Statically validated (ruby YAML + actionlint clean bar the
+> false positives). **End-to-end firing is gated on the Fixer App prerequisite
+> (still unchecked) + secrets + a test repo — that is Milestone 5's acceptance.**
 
 `on: workflow_call`. First job mints the App token
 (`actions/create-github-app-token`); routing on `github.event_name` +
