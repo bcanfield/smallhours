@@ -1,9 +1,12 @@
 # Milestone 0 — Spikes
 
-Throwaway experiments that gate *how* we build, not *whether* (see
+Experiments that gate *how* we build, not *whether* (see
 `docs/IMPLEMENTATION-PLAN.md`). Each answers one question with evidence, and
-each records its outcome as an ADR addendum. **Delete this directory once both
-outcomes are recorded** — a spike kept past its answer becomes folklore.
+each records its outcome as an ADR addendum. Both outcomes are now recorded
+(0a → ADR 0001 addendum, 0b → ADR 0002), and — against the original
+throwaway intent — **the directory is kept as a re-runnable regression guard**:
+0a's Probe A must still leak while Probe B contains, and 0b must still
+serialize. See the Retention note at the bottom.
 
 Neither spike's verdict depends on reading logs by eye or on the agent
 truthfully reporting its own containment. Both render a machine-checked
@@ -127,10 +130,18 @@ its own finding — a re-labelled issue would silently never get worked — and
 **Fallback:** declare concurrency in the stub (the stub-fattening ADR 0002
 already anticipates and accepts), recorded as an ADR 0002 addendum.
 
-## Cleanup
+## Retention (originally "Cleanup")
+
+The original plan was to delete this directory once both spikes answered their
+question. That was overtaken: both are **kept** as re-runnable regression guards
+(0a proves egress is still contained under the shipped invocation; 0b proves
+concurrency still serializes inside a called reusable workflow). So the teardown
+below is deliberately **not performed** — it is recorded only as the reversal
+path if these guards are ever retired:
 
 ```
 gh label delete spike-concurrency
 rm -rf spikes && git rm -r --cached spikes
+# then delete .github/workflows/spike-0*.yml and close the throwaway issues
 ```
-Then delete `.github/workflows/spike-0*.yml` and close the throwaway issues.
+

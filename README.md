@@ -5,15 +5,18 @@ reviews PRs; everything between — implementation, draft PR, state management,
 review-feedback revisions, and (Phase 2) CI self-healing — is automated via
 Claude Code running unattended in GitHub Actions.
 
-**Status: Milestone 1 complete (toolkit skeleton); Milestone 2 next.** Both
-Phase-1 spikes ran green on 2026-07-17 (sandbox egress + reusable-workflow
+**Status: Milestones 0–3 complete; Milestone 4 (consumer onboarding) next.**
+Both Phase-1 spikes ran green on 2026-07-17 (sandbox egress + reusable-workflow
 concurrency). The decisive finding: run the agent as `claude -p
 --permission-mode acceptEdits`, **not** `--dangerously-skip-permissions` — the
 latter disables the very sandbox meant to contain it (see the ADR 0001
-addendum). The toolkit skeleton is now in place: `release.yml` (the sole mover
-of the floating `v1` tag — ADR 0003), a callable `agent-loop.yml` skeleton, the
-consumer `stub/`, and placeholder `scripts/`, `prompts/`, and `setup/` that name
-the milestone filling each. Milestone 2 fills in the portable `scripts/`.
+addendum). The toolkit is now built: `release.yml` (the sole mover of the
+floating `v1` tag — ADR 0003), the full `agent-loop.yml` routing workflow
+(ADR 0002; self-checks-out the toolkit at the exact invoked version), the
+portable `scripts/` + `prompts/` (Phase-1 set), and the consumer `stub/`. Only
+`setup/` remains a placeholder — Milestone 4 fills it with `setup-repo.sh` /
+`doctor.sh`. **End-to-end firing is still gated on the human prerequisites: the
+Fixer GitHub App must be created and its secrets set (see the plan).**
 
 ## Reading order
 
@@ -23,7 +26,7 @@ the milestone filling each. Milestone 2 fills in the portable `scripts/`.
 2. [`CONTEXT.md`](CONTEXT.md) — the vocabulary. Terms are canonical; use them
    exactly.
 3. [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md) — milestones
-   0–7 with acceptance criteria. Milestone 0 is done; start at Milestone 1.
+   0–7 with acceptance criteria. Milestones 0–3 are done; start at Milestone 4.
 4. [`docs/adr/`](docs/adr/) — the hard-to-reverse decisions and why:
    sandbox-is-the-boundary (0001, **read the spike-0a addendum**),
    packaging/versioning (0002), release semver-channel policy (0003).
