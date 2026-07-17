@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "Spike 0a, BASELINE profile — the sandbox posture exactly as IMPLEMENTATION-PLAN.md",
+    "describes it: sandbox on, egress allowlist, nothing else. This profile exists to be",
+    "attacked, not shipped. It answers one question: are the hardening keys in",
+    "profile-hardened.json load-bearing, or redundant? Whichever probes leak here are",
+    "the ones that justify the extra keys.",
+    "Installed at /etc/claude-code/managed-settings.json (managed scope) so the",
+    "comparison isn't muddied by precedence: managed wins over everything but is",
+    "otherwise the same schema."
+  ],
+  "env": {
+    "DISABLE_AUTOUPDATER": "1"
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "*.github.com",
+        "*.githubusercontent.com",
+        "api.anthropic.com",
+        "*.anthropic.com"
+      ]
+    }
+  }
+}
