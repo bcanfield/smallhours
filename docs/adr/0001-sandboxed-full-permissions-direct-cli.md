@@ -12,7 +12,7 @@ as `CLAUDE_CODE_OAUTH_TOKEN`), never a metered Anthropic API key.
 
 ## Considered Options
 
-- **Tool allowlists via `--allowedTools` (the scaffold's posture)** — rejected:
+- **Tool allowlists via `--allowedTools` (the original proposal's posture)** — rejected:
   running `node --test` executes arbitrary repo code regardless, so the
   allowlist only stops casual damage while complicating every workflow.
 - **`anthropics/claude-code-action`** — rejected: it does not create PRs
