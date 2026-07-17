@@ -1,0 +1,117 @@
+# STAGE 2b of the loop: keep branches current and conflict-free.
+# Runs on a schedule. For each open agent PR:
+#   - BEHIND (stale but no conflict)  -> update the branch (merge base in). Safe.
+#   - DIRTY  (real merge conflict)    -> hand it to Claude to resolve semantically.
+#   - CLEAN/UNSTABLE                  -> leave it; pr-state-manager handles readiness.
+#
+# `mergeStateStatus` (the GraphQL enum) is what `gh pr view` exposes for this.
+# It is computed asynchronously by GitHub, so a value of UNKNOWN just means
+# "ask again shortly" — the next scheduled run will catch it.
+name: Claude · Keep PRs Green
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Generate App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.FIXER_APP_ID }}
+          private-key: ${{ secrets.FIXER_APP_PRIVATE_KEY }}
+
+      - name: Reconcile each open agent PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          PRS=$(gh pr list --label agent --state open \
+                  --json number,headRefName,mergeStateStatus -R "$REPO")
+
+          echo "$PRS" | jq -c '.[]' | while read -r pr; do
+            NUM=$(echo "$pr"  | jq -r '.number')
+            HEAD=$(echo "$pr" | jq -r '.headRefName')
+            STATE=$(echo "$pr" | jq -r '.mergeStateStatus')
+            echo "PR #$NUM ($HEAD) -> $STATE"
+
+            case "$STATE" in
+              BEHIND)
+                echo "  updating branch (merge base in)"
+                gh pr update-branch "$NUM" -R "$REPO" \
+                  || gh pr edit "$NUM" --add-label conflict -R "$REPO"
+                ;;
+              DIRTY)
+                echo "  real conflict -> flag for Claude to resolve"
+                gh pr ready "$NUM" --undo -R "$REPO" || true
+                gh pr edit "$NUM" --add-label conflict --add-label needs-work -R "$REPO" || true
+                echo "$NUM" >> /tmp/conflicted_prs.txt
+                ;;
+              *)
+                : ;; # CLEAN / UNSTABLE / UNKNOWN -> nothing to do here
+            esac
+          done
+
+          if [ -f /tmp/conflicted_prs.txt ]; then
+            echo "conflicted=$(paste -sd, /tmp/conflicted_prs.txt)" >> "$GITHUB_OUTPUT"
+          fi
+        id: reconcile
+
+      # Resolve the FIRST conflicted PR this run (one per run keeps it simple and
+      # bounds cost; the next scheduled run picks up the rest).
+      - name: Pick a conflicted PR
+        id: pick
+        if: steps.reconcile.outputs.conflicted != ''
+        run: echo "pr=$(echo '${{ steps.reconcile.outputs.conflicted }}' | cut -d, -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout conflicted branch
+        if: steps.pick.outputs.pr != ''
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Set up conflict state for Claude
+        if: steps.pick.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          BASE=$(gh pr view "${{ steps.pick.outputs.pr }}" --json baseRefName --jq '.baseRefName')
+          HEAD=$(gh pr view "${{ steps.pick.outputs.pr }}" --json headRefName --jq '.headRefName')
+          git config user.name  "fixer-bot"
+          git config user.email "fixer-bot@users.noreply.github.com"
+          git checkout "$HEAD"
+          git merge "origin/$BASE" || true   # leaves conflict markers for Claude
+
+      - name: Resolve conflicts with Claude
+        if: steps.pick.outputs.pr != ''
+        uses: anthropics/claude-code-action@v1
+        with:
+          github_token: ${{ steps.app-token.outputs.token }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            This branch has an in-progress merge with conflict markers.
+
+            Resolve every conflict by understanding the INTENT of both sides — do
+            not blindly pick one side. Preserve the feature work on this branch and
+            the changes from the base branch. Then:
+            1. Run `git add` on the resolved files.
+            2. Run `node --test` and confirm it passes.
+            3. Complete the merge with a commit, and push.
+            If a conflict is genuinely undecidable, leave a clear TODO comment and
+            say so rather than guessing.
+          claude_args: |
+            --max-turns 25
+            --model claude-sonnet-4-6
+            --allowedTools "Edit,MultiEdit,Write,Read,Glob,Grep,LS,Bash(git:*),Bash(node:*)"

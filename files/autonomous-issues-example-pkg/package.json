@@ -1,0 +1,11 @@
+{
+  "name": "autonomous-issues-example",
+  "version": "1.0.0",
+  "description": "Example repo demonstrating an autonomous issue -> PR -> merge loop with Claude Code",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "lint": "node --check src/*.js"
+  },
+  "license": "MIT"
+}
