@@ -1,0 +1,35 @@
+# The quality gate. Its `name:` ("CI") is referenced by every other workflow's
+# `workflow_run` trigger, so if you rename it, update auto-fix-ci.yml and
+# pr-state-manager.yml too.
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# One CI run per branch; a new push cancels the in-flight run.
+concurrency:
+  group: ci-${{ github.head_ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # This sample project is dependency-free and uses Node's built-in test
+      # runner, so there's nothing to install. Swap in your real toolchain.
+      - name: Lint
+        run: node --check src/*.js
+
+      - name: Test
+        run: node --test
