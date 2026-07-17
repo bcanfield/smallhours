@@ -4,11 +4,9 @@
 # behind the `@v1` tag in the toolkit repo, so this file rarely needs syncing
 # (drift is caught by setup/doctor.sh — Milestone 4).
 #
-# ┌─ SKELETON (Milestone 1) ────────────────────────────────────────────────┐
-# │ Trigger surface + call wiring are here. Secret forwarding and the final  │
-# │ permissions ceiling are finalized in Milestone 4 once agent-loop.yml     │
-# │ (Milestone 3) declares exactly which secrets it consumes.                │
-# └──────────────────────────────────────────────────────────────────────────┘
+# Secret forwarding matches the three secrets agent-loop.yml (Milestone 3)
+# declares as required. Milestone 4 (setup-repo.sh / doctor.sh) automates
+# creating these secrets and installing the Fixer App; the file itself is final.
 name: agent-loop
 
 # All five triggers the routing table keys off. `schedule` is wired now but is a
@@ -35,7 +33,7 @@ permissions:
 jobs:
   loop:
     uses: bcanfield/smallhours/.github/workflows/agent-loop.yml@v1
-    # secrets: (wired in Milestone 4)
-    #   CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-    #   AGENT_APP_ID:            ${{ secrets.AGENT_APP_ID }}
-    #   AGENT_APP_PRIVATE_KEY:   ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      AGENT_APP_ID:            ${{ secrets.AGENT_APP_ID }}
+      AGENT_APP_PRIVATE_KEY:   ${{ secrets.AGENT_APP_PRIVATE_KEY }}
