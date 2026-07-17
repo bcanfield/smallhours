@@ -1,0 +1,53 @@
+# Spike 0b — does job-level `concurrency:` work INSIDE a called reusable workflow?
+#
+# This is the load-bearing question behind ADR 0002. The whole reason reusable
+# workflows beat composite actions as the carrier is that they absorb job-level
+# keys — concurrency groups, the authorize→implement needs: split, timeouts —
+# so those upgrade behind the floating v1 tag instead of living in every stub.
+# If concurrency only works when declared in the CALLER, every consumer stub
+# grows a per-issue concurrency block that can never be fixed centrally. That's
+# the accepted fallback in ADR 0002, but we should only pay it if we must.
+#
+# Shape mirrors the real agent-loop.yml: group per issue, queue rather than
+# cancel — a half-finished implementation run must never be killed mid-push.
+name: spike-0b-concurrency
+
+on:
+  workflow_call:
+
+jobs:
+  serialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+
+    # The claim under test. Declared HERE, in the called workflow, not the stub.
+    concurrency:
+      group: spike-0b-issue-${{ github.event.issue.number }}
+      cancel-in-progress: false
+
+    steps:
+      # The issue's own comment log is the evidence trail — deliberately, per
+      # the CONTEXT.md invariant that all loop state lives in GitHub primitives
+      # rather than runner-local state. Serialized runs read START/END/START/END;
+      # parallel runs read START/START/END/END. No log archaeology required.
+      - name: Mark run START
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" \
+            --repo "${{ github.repository }}" \
+            --body "\`SPIKE-0B run=${{ github.run_id }} event=START ts=$(date -u +%s)\`"
+
+      # Long enough that a second run cannot plausibly slip past unnoticed.
+      - name: Hold the group
+        run: sleep 60
+
+      - name: Mark run END
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" \
+            --repo "${{ github.repository }}" \
+            --body "\`SPIKE-0B run=${{ github.run_id }} event=END ts=$(date -u +%s)\`"
