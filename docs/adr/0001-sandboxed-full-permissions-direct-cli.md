@@ -1,5 +1,10 @@
 # Sandbox is the boundary, not tool allowlists; direct CLI, not the GitHub Action
 
+> **The `--dangerously-skip-permissions` invocation in the paragraph below was
+> revised by spike 0a — it disables the sandbox. See the [Addendum](#addendum--spike-0a-outcome-2026-07-17)
+> for the correct invocation (`--permission-mode acceptEdits`). The rest of the
+> decision stands.**
+
 The agent must run repo tests, so it executes repo code by design — tool
 allowlists cannot contain a code-writing agent and pretending otherwise gives
 false safety. We instead run the Claude Code CLI directly (`claude -p`) with
