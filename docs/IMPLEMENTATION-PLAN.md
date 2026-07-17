@@ -75,9 +75,19 @@ smallhours/
 Acceptance: `release.yml` cuts `v0.1.0` and moves `v1`; repo is marked a
 template repository.
 
-## Milestone 2 — Portable scripts (Phase 1 set)
+## Milestone 2 — Portable scripts (Phase 1 set) — ✅ DONE 2026-07-17
 
-Each script: bash, `gh` + `jq` only, repo-agnostic, config from
+> All Phase-1 scripts built under `scripts/` (libs in `scripts/lib/`), plus
+> `prompts/implement.md` + `prompts/address-review.md` and the default
+> `stub/.smallhours.yml`. Config/label/settings/helper logic tested locally
+> (yq→jq path, defaults fallthrough, managed-settings render, verbatim prompt
+> render, live read-only `gh`). Toolchain gained pinned **`yq`** to read YAML
+> config (**ADR 0004** — jq can't parse YAML). Open findings surfaced to the
+> maintainer: T9 needs a `pull_request:[closed]` trigger (M3/M4 wiring); a
+> green-but-not-CLEAN PR stays draft with no Phase-1 rescue (Phase-2 sweep);
+> both in `docs/debt/`. Full end-to-end (mutating) exercise is Milestone 5.
+
+Each script: bash, `gh` + `jq` (+ `yq` for config, ADR 0004) only, repo-agnostic, config from
 `.smallhours.yml` (defaults baked into `lib/config.sh`). All state mutations
 go through `lib/state.sh`, which enforces the exactly-one-state-label
 invariant (replace, never accumulate).

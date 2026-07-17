@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# lib/common.sh — primitives shared by every stage script: repo resolution,
+# logging, and GitHub comment helpers. Source this; do not execute.
+#
+# Portability: bash + gh only. The repo is read from GITHUB_REPOSITORY (set by
+# GitHub Actions; a local caller or a future GitLab adapter sets it too), so no
+# script hard-codes a repo or reaches into an Actions event payload.
+
+[ -n "${_SMALLHOURS_COMMON_SH:-}" ] && return 0
+_SMALLHOURS_COMMON_SH=1
+
+sh_log()  { printf 'smallhours: %s\n' "$*" >&2; }
+sh_die()  { printf 'smallhours: %s\n' "$*" >&2; exit 1; }
+
+# owner/repo — GITHUB_REPOSITORY first (portable), else ask gh.
+sh_repo() {
+  if [ -n "${GITHUB_REPOSITORY:-}" ]; then
+    printf '%s' "$GITHUB_REPOSITORY"
+  else
+    gh repo view --json nameWithOwner --jq .nameWithOwner
+  fi
+}
+
+# Fail early with an actionable message if the auth contract isn't met.
+sh_require_auth() {
+  [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] || sh_die "GH_TOKEN (or GITHUB_TOKEN) must be set"
+}
+
+sh_comment_issue() { # issue-number body
+  gh issue comment "$1" --repo "$(sh_repo)" --body "$2"
+}
+
+sh_comment_pr() { # pr-number body
+  gh pr comment "$1" --repo "$(sh_repo)" --body "$2"
+}
+
+# Repo default branch (the PR base, and the branch point for agent work).
+sh_default_branch() {
+  gh repo view "$(sh_repo)" --json defaultBranchRef --jq .defaultBranchRef.name
+}
+
+# Splice a context file into a prompt template at a lone `{{CONTEXT}}` line.
+# Verbatim copy — no sed/eval — so arbitrary issue text can never be
+# interpreted as shell or regex.
+sh_render_prompt() { # template context_file out
+  local template="$1" ctxfile="$2" out="$3" line
+  : > "$out"
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$line" = "{{CONTEXT}}" ]; then
+      cat "$ctxfile" >> "$out"
+    else
+      printf '%s\n' "$line" >> "$out"
+    fi
+  done < "$template"
+}
+
+# The issue an agent PR belongs to. Authoritative source is the branch name we
+# mint (agent/issue-N or agent/issue-N-rK); falls back to a `Closes #N` in the
+# body. Prints the number, or nothing if neither is present.
+sh_issue_from_pr() { # pr-number
+  local repo head body n; repo="$(sh_repo)"
+  head="$(gh pr view "$1" --repo "$repo" --json headRefName --jq .headRefName 2>/dev/null || true)"
+  n="$(printf '%s' "$head" | sed -n 's#^agent/issue-\([0-9]\{1,\}\).*#\1#p')"
+  if [ -z "$n" ]; then
+    body="$(gh pr view "$1" --repo "$repo" --json body --jq .body 2>/dev/null || true)"
+    n="$(printf '%s' "$body" | grep -ioE 'closes #[0-9]+' | head -1 | grep -oE '[0-9]+' || true)"
+  fi
+  printf '%s' "$n"
+}
+
+# Branch name for an issue's agent work. Attempt 1 -> agent/issue-N;
+# retries -> agent/issue-N-rK (fresh branch, never force-push seen history).
+sh_agent_branch() { # issue-number [attempt]
+  local n="$1" a="${2:-1}"
+  if [ "$a" -le 1 ]; then printf 'agent/issue-%s' "$n"
+  else printf 'agent/issue-%s-r%s' "$n" "$a"; fi
+}
