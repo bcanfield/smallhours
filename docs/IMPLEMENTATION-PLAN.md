@@ -47,7 +47,14 @@ a stub that calls it on `issues: labeled`. Apply a label twice fast; confirm
 the second run queues (not parallel, not lost).
 *Fallback:* concurrency declared in the stub (accepted stub-fattening, ADR 0002).
 
-## Milestone 1 — Toolkit repo skeleton
+## Milestone 1 — Toolkit repo skeleton — ✅ DONE 2026-07-17
+
+> Skeleton laid down; `release.yml` implemented fully (the one M1 acceptance
+> criterion) and `bcanfield/smallhours` marked a template repository.
+> `agent-loop.yml`, `scripts/`, `prompts/`, `stub/`, and `setup/` exist as
+> honest skeletons/placeholders that name the milestone that fills them (M2–M4).
+> Release semver-channel policy recorded as **ADR 0003** (0.x floats under the
+> `v1` channel; `>=1.0.0` must float its own major).
 
 ```
 smallhours/

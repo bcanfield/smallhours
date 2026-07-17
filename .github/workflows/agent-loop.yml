@@ -1,0 +1,59 @@
+# agent-loop — THE reusable workflow. Consumers call it from a thin stub:
+#   jobs.loop.uses: bcanfield/smallhours/.github/workflows/agent-loop.yml@v1
+#
+# ┌─ SKELETON (Milestone 1) ────────────────────────────────────────────────┐
+# │ This file establishes the workflow_call contract and the job-level shape │
+# │ the design depends on (per-issue concurrency proven in spike 0b, ADR      │
+# │ 0002). The event ROUTING and stage jobs are implemented in Milestone 3;   │
+# │ the portable scripts they call are Milestone 2. Until then this is a      │
+# │ callable no-op that echoes the route it *would* take, so a stub can wire  │
+# │ against `@v1` before the brains land.                                     │
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# Routing table (Milestone 3 — DESIGN.md "Transitions"):
+#   issues labeled ready-for-agent                  -> authorize.sh -> implement.sh + open-pr.sh
+#   issues closed / unlabeled while agent-working   -> cancel.sh
+#   pull_request_review changes_requested           -> address-review.sh
+#   workflow_run completed (consumer CI)            -> state-manager.sh (same-repo head + `agent` label)
+#   schedule                                        -> no-op in Phase 1 (sweep in Phase 2)
+name: agent-loop
+
+on:
+  workflow_call:
+    # Consumer config travels in .smallhours.yml (loaded by lib/config.sh in
+    # Milestone 2), not as workflow inputs — so the contract here stays stable
+    # across stages. Secrets the caller must forward are declared in Milestone 3
+    # alongside the jobs that consume them (CLAUDE_CODE_OAUTH_TOKEN, AGENT_APP_ID,
+    # AGENT_APP_PRIVATE_KEY).
+    inputs: {}
+
+# Narrowest ceiling that still lets Milestone 3 mint the Fixer App token and act
+# on issues/PRs. Per-job permissions get tightened further when the stage jobs
+# land; a reusable workflow cannot exceed the caller stub's declared ceiling.
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  route:
+    name: route (skeleton)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    # Per-issue serialization, declared HERE in the called workflow so it
+    # upgrades behind the floating tag (spike 0b confirmed this works; ADR 0002).
+    # Queue, never cancel: a half-finished implementation run must not be killed
+    # mid-push. github.event.issue.number is empty for non-issue events, which
+    # collapses those to one shared group — Milestone 3 refines the key per route.
+    concurrency:
+      group: smallhours-issue-${{ github.event.issue.number || github.run_id }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Announce the route (no-op until Milestone 3)
+        run: |
+          echo "smallhours agent-loop skeleton — event: ${{ github.event_name }}"
+          echo "Routing + stage jobs are implemented in Milestone 3."
+          echo "This callable no-op exists so a consumer stub can pin @v1 today."
