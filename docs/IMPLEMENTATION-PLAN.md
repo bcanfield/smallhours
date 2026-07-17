@@ -8,9 +8,9 @@ bring back to the maintainer, not a license to redesign.
 
 ## Prerequisites (human, one-time)
 
-- [ ] Create the public **toolkit repo** (working name: `smallhours`).
-- [ ] Claude subscription token: `claude setup-token` → note it for per-repo
-      secret `CLAUDE_CODE_OAUTH_TOKEN` (1-year expiry — calendar a renewal).
+- [x] Create the public **toolkit repo** — `bcanfield/smallhours`, public.
+- [x] Claude subscription token stored as repo secret
+      `CLAUDE_CODE_OAUTH_TOKEN` (1-year expiry — calendar a renewal).
 - [ ] Create the **Fixer GitHub App**: Repository permissions Contents R/W,
       Issues R/W, Pull requests R/W, Actions Read. Note App ID; generate
       private key. This identity signs all automation pushes (required so
@@ -18,7 +18,16 @@ bring back to the maintainer, not a license to redesign.
 - [ ] Account hardening (ADR 0002 precondition for the floating tag): 2FA/
       passkeys; toolkit repo branch protection.
 
-## Milestone 0 — Spikes (gate *how*, not *whether*)
+## Milestone 0 — Spikes (gate *how*, not *whether*) — ✅ DONE 2026-07-17
+
+> Both spikes passed (run `29605887740`, `ubuntu-24.04`). **0a:** egress is
+> containable, but only under `claude -p --permission-mode acceptEdits` +
+> managed `sandbox.enabled` + `autoAllowBashIfSandboxed`; the originally
+> specified `--dangerously-skip-permissions` *disables* the sandbox. bubblewrap
+> works with the required `bwrap` AppArmor profile (no iptables fallback). Full
+> write-up: **ADR 0001 addendum**. **0b:** job-level `concurrency:` serializes
+> from inside the called reusable workflow; stubs stay thin (ADR 0002 holds).
+> Neither fallback below was needed. Experiments + outcomes live in `spikes/`.
 
 **0a. Sandbox on a hosted runner.** In a throwaway workflow on `ubuntu-latest`
 (plain VM job, NOT a container job): install pinned Claude Code, configure the
@@ -70,7 +79,7 @@ invariant (replace, never accumulate).
 |---|---|
 | `lib/config.sh` | Load consumer config + defaults; expose stage model/max-turns |
 | `lib/state.sh` | Atomic issue-state transitions; PR marker labels |
-| `lib/claude-run.sh` | Sandbox setup (per spike 0a) + `claude -p` invocation + JSON result capture |
+| `lib/claude-run.sh` | Sandbox setup + `claude -p --permission-mode acceptEdits` (NOT `--dangerously-skip-permissions` — spike 0a / ADR 0001 addendum) + JSON result capture |
 | `authorize.sh` | T1 gate: labeler has write? Fail-closed: remove label + comment on deny |
 | `implement.sh` | T1: branch `agent/issue-N` (or `-rK` on retry), run implement prompt |
 | `open-pr.sh` | T1 tail, deterministic: commits→draft PR (`agent` label, `Closes #N`); no commits→`ready-for-human`; branch-but-no-PR fallback |

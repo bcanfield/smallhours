@@ -5,7 +5,12 @@ reviews PRs; everything between — implementation, draft PR, state management,
 review-feedback revisions, and (Phase 2) CI self-healing — is automated via
 Claude Code running unattended in GitHub Actions.
 
-**Status: design complete, pre-build.** No implementation exists yet.
+**Status: Milestone 0 complete (spikes passed); Milestone 1 next.** Both
+Phase-1 spikes ran green on 2026-07-17 (sandbox egress + reusable-workflow
+concurrency). The decisive finding: run the agent as `claude -p
+--permission-mode acceptEdits`, **not** `--dangerously-skip-permissions` — the
+latter disables the very sandbox meant to contain it (see the ADR 0001
+addendum). `versions.env` is the first piece of the toolkit skeleton.
 
 ## Reading order
 
@@ -15,10 +20,13 @@ Claude Code running unattended in GitHub Actions.
 2. [`CONTEXT.md`](CONTEXT.md) — the vocabulary. Terms are canonical; use them
    exactly.
 3. [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md) — milestones
-   0–7 with acceptance criteria. Start at Milestone 0 (two spikes).
+   0–7 with acceptance criteria. Milestone 0 is done; start at Milestone 1.
 4. [`docs/adr/`](docs/adr/) — the two hard-to-reverse decisions and why:
-   sandbox-is-the-boundary (0001), packaging/versioning (0002).
-5. [`docs/research/packaging-distribution.md`](docs/research/packaging-distribution.md)
+   sandbox-is-the-boundary (0001, **read the spike-0a addendum**),
+   packaging/versioning (0002).
+5. [`spikes/`](spikes/) — the throwaway Milestone-0 experiments and their
+   recorded outcomes; kept as re-runnable regression guards.
+6. [`docs/research/packaging-distribution.md`](docs/research/packaging-distribution.md)
    — primary-source citations behind ADR 0002.
 
 ## The system in one paragraph
