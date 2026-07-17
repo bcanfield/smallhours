@@ -47,7 +47,8 @@ No second label taxonomy: draft/ready + marker labels.
 | Automation gave up | draft | `agent`, `human-needed` |
 
 `agent` on a PR is an ownership marker (automation may touch), never a state.
-`UNSTABLE` is NOT treated as ready (deviation from the source scaffold).
+`UNSTABLE` (non-required check failing) is NOT treated as ready: "ready" must
+mean nothing is red when the maintainer opens the PR.
 
 ## Transitions (owner → effect)
 
@@ -73,9 +74,11 @@ No second label taxonomy: draft/ready + marker labels.
 - No commits produced → `ready-for-human`, no ghost PR.
 - Branch exists but no PR → deterministic fallback step opens it (also T1).
 - Runner death → sweep watchdog: `agent-working` + no open PR after ~1h → `ready-for-human`.
-- Auto-fix must gate on the PR carrying `agent` (scaffold bug: it fired on human PRs).
-- Attempt counter = consecutive failures; any green strips `autofix-attempt-*` labels
-  (scaffold bug: counter never reset).
+- Auto-fix must gate on the PR carrying `agent` — a red CI run on a
+  human-authored PR must never summon the agent.
+- Attempt counter = *consecutive* failures: any green CI strips the
+  `autofix-attempt-*` labels, so the cap can never fire from failures separated
+  by a success.
 - `mergeStateStatus UNKNOWN` → do nothing; next sweep retries.
 - Sweep hard-checks same-repo head before checkout, even though `agent` label
   should already imply it.
