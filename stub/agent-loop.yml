@@ -1,0 +1,41 @@
+# smallhours consumer stub — copy this into a consumer repo as
+# .github/workflows/agent-loop.yml. It is DELIBERATELY thin: triggers, a
+# permissions ceiling, and one versioned `uses:` line. All behaviour lives
+# behind the `@v1` tag in the toolkit repo, so this file rarely needs syncing
+# (drift is caught by setup/doctor.sh — Milestone 4).
+#
+# ┌─ SKELETON (Milestone 1) ────────────────────────────────────────────────┐
+# │ Trigger surface + call wiring are here. Secret forwarding and the final  │
+# │ permissions ceiling are finalized in Milestone 4 once agent-loop.yml     │
+# │ (Milestone 3) declares exactly which secrets it consumes.                │
+# └──────────────────────────────────────────────────────────────────────────┘
+name: agent-loop
+
+# All five triggers the routing table keys off. `schedule` is wired now but is a
+# no-op in Phase 1 (it becomes the sweep in Phase 2 — the stub never changes).
+on:
+  issues:
+    types: [labeled, unlabeled, closed]
+  pull_request_review:
+    types: [submitted]
+  workflow_run:
+    workflows: [ci]              # must match .smallhours.yml `ci_workflow`
+    types: [completed]
+  schedule:
+    - cron: "*/15 * * * *"       # Phase 1: no-op; Phase 2: sweep cadence
+
+# Consumer-side ceiling. The reusable workflow cannot exceed this; it requests
+# less per job. Finalized in Milestone 4.
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  loop:
+    uses: bcanfield/smallhours/.github/workflows/agent-loop.yml@v1
+    # secrets: (wired in Milestone 4)
+    #   CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    #   AGENT_APP_ID:            ${{ secrets.AGENT_APP_ID }}
+    #   AGENT_APP_PRIVATE_KEY:   ${{ secrets.AGENT_APP_PRIVATE_KEY }}

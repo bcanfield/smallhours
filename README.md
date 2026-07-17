@@ -5,12 +5,15 @@ reviews PRs; everything between — implementation, draft PR, state management,
 review-feedback revisions, and (Phase 2) CI self-healing — is automated via
 Claude Code running unattended in GitHub Actions.
 
-**Status: Milestone 0 complete (spikes passed); Milestone 1 next.** Both
+**Status: Milestone 1 complete (toolkit skeleton); Milestone 2 next.** Both
 Phase-1 spikes ran green on 2026-07-17 (sandbox egress + reusable-workflow
 concurrency). The decisive finding: run the agent as `claude -p
 --permission-mode acceptEdits`, **not** `--dangerously-skip-permissions` — the
 latter disables the very sandbox meant to contain it (see the ADR 0001
-addendum). `versions.env` is the first piece of the toolkit skeleton.
+addendum). The toolkit skeleton is now in place: `release.yml` (the sole mover
+of the floating `v1` tag — ADR 0003), a callable `agent-loop.yml` skeleton, the
+consumer `stub/`, and placeholder `scripts/`, `prompts/`, and `setup/` that name
+the milestone filling each. Milestone 2 fills in the portable `scripts/`.
 
 ## Reading order
 
@@ -21,9 +24,9 @@ addendum). `versions.env` is the first piece of the toolkit skeleton.
    exactly.
 3. [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md) — milestones
    0–7 with acceptance criteria. Milestone 0 is done; start at Milestone 1.
-4. [`docs/adr/`](docs/adr/) — the two hard-to-reverse decisions and why:
+4. [`docs/adr/`](docs/adr/) — the hard-to-reverse decisions and why:
    sandbox-is-the-boundary (0001, **read the spike-0a addendum**),
-   packaging/versioning (0002).
+   packaging/versioning (0002), release semver-channel policy (0003).
 5. [`spikes/`](spikes/) — the throwaway Milestone-0 experiments and their
    recorded outcomes; kept as re-runnable regression guards.
 6. [`docs/research/packaging-distribution.md`](docs/research/packaging-distribution.md)
