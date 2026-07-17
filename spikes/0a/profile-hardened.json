@@ -1,0 +1,51 @@
+{
+  "_comment": [
+    "Spike 0a, HARDENED profile — the posture this toolkit would actually ship.",
+    "Every key beyond BASELINE closes a documented gap, and the spike's job is to",
+    "prove each one earns its place:",
+    "  failIfUnavailable        — no sandbox, no run. Without it a missing bubblewrap",
+    "                             downgrades to a WARNING and Claude runs UNSANDBOXED.",
+    "  allowUnsandboxedCommands — kills the dangerouslyDisableSandbox escape hatch the",
+    "                             model may reach for on its own when a command fails.",
+    "  allowManagedDomainsOnly  — non-allowlisted domains are BLOCKED rather than",
+    "                             prompted. Unattended -p runs have nobody to prompt.",
+    "  permissions.deny         — sandbox.network covers the Bash tool ONLY. WebFetch/",
+    "                             WebSearch are separate egress the allowlist never sees.",
+    "  allowManagedPermissionRulesOnly — a repo's own .claude/settings.json cannot",
+    "                             re-allow what we just denied. Consumer repos are",
+    "                             untrusted input; their settings file is too.",
+    "See docs/adr/0001 addendum for the outcome."
+  ],
+  "env": {
+    "DISABLE_AUTOUPDATER": "1"
+  },
+  "permissions": {
+    "deny": [
+      "WebFetch",
+      "WebSearch"
+    ]
+  },
+  "allowManagedPermissionRulesOnly": true,
+  "allowManagedHooksOnly": true,
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "autoAllowBashIfSandboxed": true,
+    "allowUnsandboxedCommands": false,
+    "allowManagedDomainsOnly": true,
+    "excludedCommands": [],
+    "enableWeakerNestedSandbox": false,
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "*.github.com",
+        "*.githubusercontent.com",
+        "api.anthropic.com",
+        "*.anthropic.com"
+      ],
+      "allowUnixSockets": [],
+      "allowAllUnixSockets": false,
+      "allowLocalBinding": false
+    }
+  }
+}

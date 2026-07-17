@@ -1,0 +1,23 @@
+# Spike 0b caller — stands in for a consumer repo's stub.
+#
+# Deliberately as thin as the real stub will be: triggers, a permissions
+# ceiling, and one `uses:` line. It declares NO concurrency — that is the
+# entire point. If runs serialize anyway, the called workflow's concurrency
+# block is doing the work and ADR 0002's carrier choice holds.
+#
+# Local `./` ref rather than owner/repo@v1: same concurrency semantics, no
+# second repo needed. Note that `issues` events always run the workflow from
+# the DEFAULT BRANCH, so this pair must be merged to main before it will fire.
+name: spike-0b-caller
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  issues: write
+
+jobs:
+  call:
+    if: github.event.label.name == 'spike-concurrency'
+    uses: ./.github/workflows/spike-0b-concurrency.yml
