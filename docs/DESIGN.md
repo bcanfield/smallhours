@@ -1,4 +1,4 @@
-# claude-auto — Design (grilled and agreed 2026-07-17)
+# smallhours — Design (grilled and agreed 2026-07-17)
 
 Autonomous issue → PR system: the maintainer grills issues externally and
 reviews PRs; everything between is automated. This document records the
@@ -100,7 +100,7 @@ A dedicated GitHub App ("Fixer") signs all automation pushes — required so
 pushes re-trigger CI (GITHUB_TOKEN pushes don't) and so automation identity is
 distinct from the maintainer.
 
-## Stage configuration (per-repo `.claude-auto.yml`, defaults in central repo)
+## Stage configuration (per-repo `.smallhours.yml`, defaults in central repo)
 
 | Stage | Model default | max-turns default |
 |---|---|---|
@@ -133,7 +133,7 @@ issues.
   seeding new consumers.
 - **Consumer repos:** one thin stub — `on:` triggers + permissions ceiling +
   `jobs.loop.uses: <toolkit>/.github/workflows/agent-loop.yml@v1` + secret
-  wiring — plus `.claude-auto.yml` config. Nothing else.
+  wiring — plus `.smallhours.yml` config. Nothing else.
 - **Versioning:** floating `v1` tag moved only by a release workflow; breaking
   changes cut `v2`. SHA-pinning revisited only if third-party consumers appear.
 - **GHCR image:** deferred until the GitLab/self-hosted milestone; the
