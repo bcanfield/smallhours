@@ -34,6 +34,12 @@ main() {
   branch="$(sh_agent_branch "$issue" "$attempt")"
   base="$(sh_default_branch)"
 
+  # stdout is a machine value (the branch name) consumed by the caller. Git and
+  # gh chatter must NOT leak into it (git's "branch '…' set up to track" line
+  # once corrupted the captured branch). Save real stdout on fd 4, send
+  # everything else to stderr; emit the branch on fd 4 at the end.
+  exec 4>&1 1>&2
+
   # Coarse state; authorize.sh set this already, but keep implement.sh runnable
   # on its own (self-hosted portability contract).
   state_set_issue "$issue" agent-working
@@ -74,7 +80,7 @@ main() {
   git push --set-upstream origin "$branch"
 
   sh_log "implement: branch $branch pushed"
-  printf '%s\n' "$branch"
+  printf '%s\n' "$branch" >&4
 }
 
 main "$@"

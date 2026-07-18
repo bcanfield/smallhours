@@ -24,6 +24,10 @@ main() {
   [ -n "$branch" ] || branch="$(sh_agent_branch "$issue" "$attempt")"
   base="$(sh_default_branch)"
 
+  # stdout is a machine value (the PR number). Keep git/gh chatter off it —
+  # save real stdout on fd 4, everything else to stderr (see implement.sh).
+  exec 4>&1 1>&2
+
   git fetch --quiet origin "$base" "$branch" 2>/dev/null || git fetch --quiet origin "$base"
 
   # Commits on the branch that aren't on base.
@@ -61,7 +65,7 @@ _Opened by smallhours. This PR is automation-owned (\`agent\`) and stays a draft
     sh_log "open-pr: created draft PR #$pr for $branch"
   fi
 
-  printf '%s\n' "$pr"
+  printf '%s\n' "$pr" >&4
 }
 
 main "$@"
