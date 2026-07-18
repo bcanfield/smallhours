@@ -187,6 +187,15 @@ JSON
   sh_log "✓ secret-scanning push protection enabled"
 }
 
+# Auto-delete the head branch on merge — this is what deletes agent/issue-N when
+# a PR merges (T8). Without it, merged agent branches linger.
+enable_auto_delete_branch() { # repo
+  if [ "$DRY_RUN" -eq 1 ]; then sh_log "DRY-RUN: enable delete-branch-on-merge"; return; fi
+  gh api --method PATCH "repos/$1" -F delete_branch_on_merge=true >/dev/null 2>&1 \
+    && sh_log "✓ auto-delete head branch on merge enabled (T8 branch cleanup)" \
+    || sh_log "⚠ could not enable delete-branch-on-merge"
+}
+
 set_branch_protection() { # repo
   local repo="$1"
   if [ "$SKIP_PROTECTION" -eq 1 ]; then sh_log "skipping branch protection (--skip-protection)"; return; fi
@@ -240,6 +249,7 @@ main() {
   create_labels "$repo"
   land_files "$repo"
   enable_secret_scanning "$repo"
+  enable_auto_delete_branch "$repo"
   set_branch_protection "$repo"
 
   sh_log "onboarding complete for $repo"

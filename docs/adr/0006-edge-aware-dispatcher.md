@@ -1,7 +1,7 @@
 # 0006 — Dispatcher enforces ticket blocking edges
 
 **Date:** 2026-07-17
-**Status:** Accepted (mechanism); companion sub-decisions in progress — see Decision
+**Status:** Accepted
 
 ## Context
 
@@ -40,16 +40,51 @@ This extends the reconciler philosophy of ADR 0005: every tick re-evaluates the
 full picture, so a missed event, a reopened blocker, or a bulk labeling all
 converge to correct behavior within one schedule interval.
 
-**Companion sub-decisions being grilled in this session (will be recorded here
-as they land):**
+**Edge representation — normalize into native relations.** Native GitHub issue
+dependencies are the single canonical edge store; the promotion decision reads
+only them (GraphQL). A deterministic reconcile step, run idempotently on every
+dispatch tick, parses any `## Blocked by` body section and upserts missing
+native relations from it. Parsing failure is loud (comment on the issue), never
+a silent scheduling decision. Body text wins over manual relation deletion —
+to truly remove an edge, edit the body. GitHub's own UI consequently shows
+"Blocked by #A" on every ticket for free. Requires the Fixer App to hold issue
+relations write permission. Rejected: union-reading both sources every tick
+(prose parsing permanently on the hot path, two sources of truth); native-only
+(a text-only edge is silently ignored — the exact invisible-unblock failure
+this ADR exists to prevent).
 
-- Edge representation: where edges canonically live and how the dispatcher
-  reads them.
-- Unblock semantics: what clears an edge — in particular a blocker closed
-  *unmerged* (not planned).
-- Chains × WIP: serialize-on-merge vs. stacked PRs.
-- Failure modes: unresolvable references, cycles, observability of a blocked
-  queue.
+**Unblock semantics — cleared means completed, not merely closed.** An edge is
+cleared when the blocker is closed with `stateReason: COMPLETED` (merged PR via
+`Closes #N`, or the maintainer hand-closing it done). A blocker closed
+`NOT_PLANNED` is a **plan change**: each open dependent moves to
+`ready-for-human` with a comment naming the dead blocker (idempotent, once) —
+re-planning is human judgment, same fail-toward-human posture as T3/T4/T9.
+Recovery is one label action if the dependents were actually fine. A blocker
+*reopened* while its dependent is still queued re-blocks it automatically (the
+reconciler recomputes every tick); reopened while the dependent is already
+`agent-working` is an accepted Phase-1 race, left to the Phase 2 sweep.
+Rejected: auto-clear on any close (unattended token spend on tickets whose
+foundation was just deleted); blocked-forever (silent stall).
+
+**Chains × WIP — serialize on merge.** A dependent starts only after its
+blockers' changes are on `main`. Stacked PRs are out of scope (see Payoff
+trigger; debt entry `chain-serialize-no-stacked-prs`).
+
+**Malformed edges — wait on the ambiguous, eject the impossible.** An
+unresolvable `## Blocked by` reference (typo, deleted issue, or cross-repo ref
+— cross-repo dependencies unsupported in v1) fails closed: the issue stays
+blocked, with a one-time comment naming the ref. It might resolve later, so it
+waits. A **cycle** can never self-heal — no scheduling order is correct — so
+the reconciler detects cycles among open queued issues (DFS on a tiny graph
+each tick) and moves every member to `ready-for-human` with a comment showing
+the cycle. Rejected: ignoring unparseable refs (silent unblock); parking
+cycles blocked (permanent silent stall).
+
+**Observability — the native relations UI is the observability.** Because
+every edge is normalized into a native dependency, GitHub already renders
+"Blocked by #N" with live open/closed status on each ticket. No `blocked`
+marker label (would introduce a marker axis on issues and one more thing to
+keep truthful), no summary comments (noise).
 
 ## Consequences
 
