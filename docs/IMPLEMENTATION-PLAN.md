@@ -211,6 +211,7 @@ models:        { implement: claude-sonnet-5, address_review: claude-sonnet-5,
                  auto_fix: claude-sonnet-5, resolve_conflict: claude-sonnet-5 }
 max_turns:     { implement: 50, address_review: 30, auto_fix: 25, resolve_conflict: 20 }
 attempt_cap: 3
+max_concurrent: 3          # WIP cap: max issues in agent-working at once (ADR 0005)
 ci_workflow: ci            # name the workflow_run gate keys off
 egress_extra_domains: []   # appended to the sandbox allowlist
 npm_allowed: false         # when true, ignore-scripts=true is enforced
