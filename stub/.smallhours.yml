@@ -24,6 +24,11 @@ max_turns:
 # Consecutive CI-fix attempts before giving up (Phase 2). Default: 3.
 attempt_cap: 3
 
+# Max issues worked at once. ready-for-agent is an unbounded queue; the
+# dispatcher keeps at most this many in agent-working, promoting the rest as
+# slots free. Default: 3.
+max_concurrent: 3
+
 # Name of the consumer CI workflow the state machine gates on. Must match the
 # workflows entry in the stub's workflow_run trigger. Default: ci.
 ci_workflow: ci
