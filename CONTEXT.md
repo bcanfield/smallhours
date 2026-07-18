@@ -44,6 +44,19 @@ spending tokens on it.
 **`ready-for-human`** — State label for work that needs a person, not the agent.
 Candidate mapping for "automation gave up" outcomes.
 
+**Blocking edge** — A declared dependency between issues: the blocked issue
+must not be worked until the blocker is **cleared**. Canonically a native
+GitHub issue dependency; a `## Blocked by` body section is input that gets
+normalized into one (ADR 0006).
+
+**Cleared (edge)** — A blocking edge whose blocker is closed as completed
+(merged PR or hand-closed done). A blocker closed not-planned does *not* clear
+the edge — it moves dependents to `ready-for-human` (plan change).
+
+**Promotable** — A `ready-for-agent` issue all of whose blocking edges are
+cleared. The dispatcher promotes only promotable issues; an issue with no
+edges is trivially promotable.
+
 **Maintainer** — The human (initially only Brandin) who grills issues, applies
 `ready-for-agent`, reviews PRs, and merges. The only actor with write access who
 participates manually.
