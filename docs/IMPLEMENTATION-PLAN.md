@@ -47,7 +47,14 @@ a stub that calls it on `issues: labeled`. Apply a label twice fast; confirm
 the second run queues (not parallel, not lost).
 *Fallback:* concurrency declared in the stub (accepted stub-fattening, ADR 0002).
 
-## Milestone 1 — Toolkit repo skeleton
+## Milestone 1 — Toolkit repo skeleton — ✅ DONE 2026-07-17
+
+> Skeleton laid down; `release.yml` implemented fully (the one M1 acceptance
+> criterion) and `bcanfield/smallhours` marked a template repository.
+> `agent-loop.yml`, `scripts/`, `prompts/`, `stub/`, and `setup/` exist as
+> honest skeletons/placeholders that name the milestone that fills them (M2–M4).
+> Release semver-channel policy recorded as **ADR 0003** (0.x floats under the
+> `v1` channel; `>=1.0.0` must float its own major).
 
 ```
 smallhours/
@@ -68,9 +75,19 @@ smallhours/
 Acceptance: `release.yml` cuts `v0.1.0` and moves `v1`; repo is marked a
 template repository.
 
-## Milestone 2 — Portable scripts (Phase 1 set)
+## Milestone 2 — Portable scripts (Phase 1 set) — ✅ DONE 2026-07-17
 
-Each script: bash, `gh` + `jq` only, repo-agnostic, config from
+> All Phase-1 scripts built under `scripts/` (libs in `scripts/lib/`), plus
+> `prompts/implement.md` + `prompts/address-review.md` and the default
+> `stub/.smallhours.yml`. Config/label/settings/helper logic tested locally
+> (yq→jq path, defaults fallthrough, managed-settings render, verbatim prompt
+> render, live read-only `gh`). Toolchain gained pinned **`yq`** to read YAML
+> config (**ADR 0004** — jq can't parse YAML). Open findings surfaced to the
+> maintainer: T9 needs a `pull_request:[closed]` trigger (M3/M4 wiring); a
+> green-but-not-CLEAN PR stays draft with no Phase-1 rescue (Phase-2 sweep);
+> both in `docs/debt/`. Full end-to-end (mutating) exercise is Milestone 5.
+
+Each script: bash, `gh` + `jq` (+ `yq` for config, ADR 0004) only, repo-agnostic, config from
 `.smallhours.yml` (defaults baked into `lib/config.sh`). All state mutations
 go through `lib/state.sh`, which enforces the exactly-one-state-label
 invariant (replace, never accumulate).
@@ -91,7 +108,18 @@ invariant (replace, never accumulate).
 Acceptance: each script runnable locally against a test repo with only
 `GH_TOKEN` + config env set (this is the self-hosted portability contract).
 
-## Milestone 3 — `agent-loop.yml` reusable workflow
+## Milestone 3 — `agent-loop.yml` reusable workflow — ✅ DONE 2026-07-17
+
+> Full routing workflow built (replaces the M1 skeleton): per-route jobs mint
+> the Fixer App token, self-check-out the toolkit at the exact invoked version
+> via `job.workflow_repository`@`job.workflow_sha` (verified against GitHub's
+> contexts reference — actionlint ≤1.7.x flags these on a stale schema; false
+> positive), and call the M2 scripts. authorize→implement `needs:` split;
+> per-issue/-PR/-branch `concurrency` (spike 0b); timeouts 40m implement /
+> address-review, 15m others; schedule no-op. Stub secret-wiring uncommented so
+> the call validates. Statically validated (ruby YAML + actionlint clean bar the
+> false positives). **End-to-end firing is gated on the Fixer App prerequisite
+> (still unchecked) + secrets + a test repo — that is Milestone 5's acceptance.**
 
 `on: workflow_call`. First job mints the App token
 (`actions/create-github-app-token`); routing on `github.event_name` +
@@ -110,7 +138,21 @@ timeouts (implement 40m, others 15m), narrowest per-job permissions.
 
 Acceptance: all Phase 1 transitions fire from a stub-equipped test repo.
 
-## Milestone 4 — Consumer onboarding
+## Milestone 4 — Consumer onboarding — ✅ DONE 2026-07-17
+
+> `setup-repo.sh` + `doctor.sh` built and run live against the guinea-pig
+> `bcanfield/mediamtx-connect`: 13-label vocabulary created, secret-scanning
+> enabled, the CI workflow name auto-detected (`CI`) and substituted into the
+> stub/config. Both scripts are **ruleset-aware** (the real-world case the plan
+> didn't anticipate): mediamtx-connect protects `main` with a *ruleset* not
+> legacy protection, so setup lands the stub + config via an **onboarding PR**
+> (PR #194) instead of a rejected direct push and leaves the existing ruleset
+> untouched; `doctor` reads effective rules (not just legacy). `doctor` is clean
+> except the stub/config, which read MISSING until PR #194 is merged (correct —
+> that IS the "breaking a precondition fails doctor" behaviour). Deferrals in
+> `docs/debt/`: Fixer-App install is a manual UI step (not automatable with a
+> user token), and required-check auto-detection is weak for rulesetless repos.
+> **The App-install + `ready-for-agent` trigger is Milestone 5.**
 
 - `stub/agent-loop.yml`: all five triggers (schedule included, no-op),
   permissions ceiling, one `uses: …/agent-loop.yml@v1`, secret wiring

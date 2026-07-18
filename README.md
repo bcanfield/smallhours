@@ -5,12 +5,18 @@ reviews PRs; everything between — implementation, draft PR, state management,
 review-feedback revisions, and (Phase 2) CI self-healing — is automated via
 Claude Code running unattended in GitHub Actions.
 
-**Status: Milestone 0 complete (spikes passed); Milestone 1 next.** Both
-Phase-1 spikes ran green on 2026-07-17 (sandbox egress + reusable-workflow
+**Status: Milestones 0–3 complete; Milestone 4 (consumer onboarding) next.**
+Both Phase-1 spikes ran green on 2026-07-17 (sandbox egress + reusable-workflow
 concurrency). The decisive finding: run the agent as `claude -p
 --permission-mode acceptEdits`, **not** `--dangerously-skip-permissions` — the
 latter disables the very sandbox meant to contain it (see the ADR 0001
-addendum). `versions.env` is the first piece of the toolkit skeleton.
+addendum). The toolkit is now built: `release.yml` (the sole mover of the
+floating `v1` tag — ADR 0003), the full `agent-loop.yml` routing workflow
+(ADR 0002; self-checks-out the toolkit at the exact invoked version), the
+portable `scripts/` + `prompts/` (Phase-1 set), and the consumer `stub/`. Only
+`setup/` remains a placeholder — Milestone 4 fills it with `setup-repo.sh` /
+`doctor.sh`. **End-to-end firing is still gated on the human prerequisites: the
+Fixer GitHub App must be created and its secrets set (see the plan).**
 
 ## Reading order
 
@@ -20,10 +26,10 @@ addendum). `versions.env` is the first piece of the toolkit skeleton.
 2. [`CONTEXT.md`](CONTEXT.md) — the vocabulary. Terms are canonical; use them
    exactly.
 3. [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md) — milestones
-   0–7 with acceptance criteria. Milestone 0 is done; start at Milestone 1.
-4. [`docs/adr/`](docs/adr/) — the two hard-to-reverse decisions and why:
+   0–7 with acceptance criteria. Milestones 0–3 are done; start at Milestone 4.
+4. [`docs/adr/`](docs/adr/) — the hard-to-reverse decisions and why:
    sandbox-is-the-boundary (0001, **read the spike-0a addendum**),
-   packaging/versioning (0002).
+   packaging/versioning (0002), release semver-channel policy (0003).
 5. [`spikes/`](spikes/) — the throwaway Milestone-0 experiments and their
    recorded outcomes; kept as re-runnable regression guards.
 6. [`docs/research/packaging-distribution.md`](docs/research/packaging-distribution.md)
