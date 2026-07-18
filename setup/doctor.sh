@@ -100,6 +100,12 @@ check_secret_scanning() { # repo
   [ "$st" = "enabled" ] && ok "secret-scanning push protection enabled" || bad "secret-scanning push protection not enabled ($st)"
 }
 
+check_auto_delete() { # repo
+  local v; v="$(gh repo view "$1" --json deleteBranchOnMerge --jq .deleteBranchOnMerge 2>/dev/null)"
+  [ "$v" = "true" ] && ok "auto-delete head branch on merge enabled (T8 cleanup)" \
+    || bad "auto-delete head branch on merge not enabled — merged agent branches will linger"
+}
+
 check_ci() { # repo
   gh api "repos/$1/actions/workflows" --jq '.workflows[] | select(.state=="active") | .name' 2>/dev/null | grep -qiE '^ci$' \
     && ok "a CI workflow exists (the loop keys off it)" || bad "no active CI workflow found"
@@ -128,6 +134,7 @@ main() {
   check_stub "$repo" "$def"
   check_config "$repo" "$def"
   check_secret_scanning "$repo"
+  check_auto_delete "$repo"
   check_protection "$repo" "$def"
   check_ci "$repo"
 
