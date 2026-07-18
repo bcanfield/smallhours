@@ -1,18 +1,24 @@
 # agent-loop — THE reusable workflow. Consumers call it from a thin stub:
 #   jobs.loop.uses: bcanfield/smallhours/.github/workflows/agent-loop.yml@v1
 #
-# It routes each GitHub event to a portable script in scripts/ (Milestone 2).
-# The scripts are the brains; this file is only the runtime adapter: mint the
-# Fixer App token, check out the right repos, and call the right script with
-# explicit arguments. A future GitLab/self-hosted adapter reuses the same
-# scripts with different glue.
+# It routes each GitHub event to a portable script in scripts/ (the brains).
+# This file is only the runtime adapter: mint the Fixer App token, check out the
+# right repos, call the right script. All queue/routing logic upgrades behind
+# the tag — the stub never changes (ADR 0002).
+#
+# WORK QUEUE (ADR 0005): `ready-for-agent` is an unbounded queue of validated
+# issues; at most `max_concurrent` (.smallhours.yml, default 3) run at once. A
+# dispatcher (idempotent reconciler, one global lock) promotes the oldest queued
+# issues into free slots. Promotion sets `agent-working`, which re-triggers the
+# implement route via the label-chain.
 #
 # Routing (DESIGN.md "Transitions"):
-#   issues labeled ready-for-agent               -> authorize -> implement (+open-pr, +usage)
-#   issues closed / unlabeled(agent-working)     -> cancel  (T10 / T11)
-#   pull_request_review changes_requested        -> address-review (T7)
-#   workflow_run completed (consumer CI)         -> state-manager (T2 / T3)
-#   schedule                                     -> no-op in Phase 1
+#   issues labeled ready-for-agent          -> authorize (validate + queue) -> dispatch
+#   schedule                                -> dispatch (drain the queue as slots free)
+#   issues labeled agent-working            -> implement (guarded: fresh, no open agent PR)
+#   issues closed / unlabeled(agent-working, by a human) -> cancel  (T10 / T11)
+#   pull_request_review changes_requested   -> address-review (T7)
+#   workflow_run completed (consumer CI)    -> state-manager (T2 / T3)
 #
 # Self-checkout: jobs that need the toolkit's own files check out
 # ${{ job.workflow_repository }}@${{ job.workflow_sha }} — the EXACT version the
@@ -31,14 +37,11 @@ on:
       AGENT_APP_PRIVATE_KEY:
         required: true
 
-# No ambient GITHUB_TOKEN power: every mutation uses the Fixer App token, so
-# each job needs only enough to check out. Per-job perms stay within the stub's
-# ceiling (Milestone 4).
 permissions:
   contents: read
 
 jobs:
-  # ── T1 gate: does the labeller have write? Fail-closed inside authorize.sh ──
+  # ── T1 gate: validate the labeller, then QUEUE (dispatcher starts it later) ──
   authorize:
     if: >-
       github.event_name == 'issues' &&
@@ -48,8 +51,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-    # Per-issue serialization (spike 0b). Shared with `implement` so a re-label
-    # queues behind the in-flight run instead of racing it. Never cancel.
     concurrency:
       group: smallhours-issue-${{ github.event.issue.number }}
       cancel-in-progress: false
@@ -78,10 +79,118 @@ jobs:
             echo "authorized=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # ── T1 body: implement on agent/issue-N, deterministic draft PR, usage ─────
-  implement:
+  # ── Dispatcher (idempotent, one global lock) — promptly after a grant ───────
+  dispatch_on_grant:
     needs: authorize
     if: needs.authorize.outputs.authorized == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    concurrency:
+      group: smallhours-dispatch
+      cancel-in-progress: false
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: token
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .smallhours-toolkit
+      - name: Install yq + fetch consumer config
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          . .smallhours-toolkit/versions.env
+          curl -fsSL -o "$RUNNER_TEMP/yq" \
+            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
+          gh api "repos/${{ github.repository }}/contents/.smallhours.yml" \
+            --jq '.content' 2>/dev/null | base64 -d > "$RUNNER_TEMP/smallhours-config.yml" || true
+      - name: Dispatch
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
+        run: .smallhours-toolkit/scripts/dispatch.sh
+
+  # ── Dispatcher on the schedule tick — drains the queue as slots free ────────
+  dispatch_scheduled:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    concurrency:
+      group: smallhours-dispatch
+      cancel-in-progress: false
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: token
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .smallhours-toolkit
+      - name: Install yq + fetch consumer config
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          . .smallhours-toolkit/versions.env
+          curl -fsSL -o "$RUNNER_TEMP/yq" \
+            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
+          gh api "repos/${{ github.repository }}/contents/.smallhours.yml" \
+            --jq '.content' 2>/dev/null | base64 -d > "$RUNNER_TEMP/smallhours-config.yml" || true
+      - name: Dispatch
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
+        run: .smallhours-toolkit/scripts/dispatch.sh
+
+  # ── Guard: a fresh promotion (no open agent PR) vs an address-review re-summon
+  implement_guard:
+    if: >-
+      github.event_name == 'issues' &&
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'agent-working'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      go: ${{ steps.guard.outputs.go }}
+    steps:
+      - id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          issue="${{ github.event.issue.number }}"
+          # Only a fresh dispatch has no agent PR. An address-review re-summon
+          # (which also sets agent-working) already has one — skip implement.
+          if gh pr list --repo "${{ github.repository }}" --state open --label agent \
+               --json headRefName --jq '.[].headRefName' \
+             | grep -Eq "^agent/issue-${issue}(-|$)"; then
+            echo "go=false" >> "$GITHUB_OUTPUT"
+            echo "issue #$issue already has an agent PR — not a fresh dispatch, skipping implement"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── T1 body: implement on agent/issue-N, deterministic draft PR, usage ─────
+  implement:
+    needs: implement_guard
+    if: needs.implement_guard.outputs.go == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
@@ -95,18 +204,19 @@ jobs:
         with:
           app-id: ${{ secrets.AGENT_APP_ID }}
           private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
-      # Consumer repo = working tree. App-token credentials so the push
-      # re-triggers CI (GITHUB_TOKEN pushes don't — ADR 0001).
       - uses: actions/checkout@v4
         with:
           token: ${{ steps.token.outputs.token }}
           fetch-depth: 0
-      # Toolkit = scripts + prompts, at the exact invoked version.
       - uses: actions/checkout@v4
         with:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
+      # The toolkit checkout lives inside the consumer worktree; keep `git add -A`
+      # in the scripts from ever committing it (ADR 0005 bugfix).
+      - name: Exclude the toolkit checkout from consumer commits
+        run: echo '/.smallhours-toolkit/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
       - name: Load pinned versions
         run: grep -E '^[A-Z_][A-Z0-9_]*=' .smallhours-toolkit/versions.env >> "$GITHUB_ENV"
       - name: Install yq (pinned)
@@ -134,13 +244,17 @@ jobs:
             "$T/report-usage.sh" "$pr" "${RUNNER_TEMP}/smallhours-result.json" implement
           fi
 
-  # ── Cancellation: T10 (issue closed mid-run) / T11 (agent-working removed) ──
+  # ── Cancellation: T10 (issue closed mid-run) / T11 (a HUMAN removed the state)
+  # The sender.type == 'User' guard is essential: the App removes `agent-working`
+  # on every normal transition (-> in-review / ready-for-human), and that must
+  # NOT read as a cancellation. Only a human pulling the label is T11.
   cancel:
     if: >-
       github.event_name == 'issues' &&
       ( github.event.action == 'closed' ||
         ( github.event.action == 'unlabeled' &&
-          github.event.label.name == 'agent-working' ) )
+          github.event.label.name == 'agent-working' &&
+          github.event.sender.type == 'User' ) )
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -166,8 +280,7 @@ jobs:
           T=.smallhours-toolkit/scripts
           issue="${{ github.event.issue.number }}"
           if [ "${{ github.event.action }}" = "closed" ]; then
-            # Only a mid-run close cancels. A normal merge closes the issue from
-            # `in-review`, which must NOT be treated as a cancellation.
+            # Only a mid-run close cancels. A normal merge closes from `in-review`.
             if gh issue view "$issue" --json labels --jq '.labels[].name' | grep -Fxq agent-working; then
               "$T/cancel.sh" issue-closed "$issue"
             else
@@ -204,6 +317,8 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
+      - name: Exclude the toolkit checkout from consumer commits
+        run: echo '/.smallhours-toolkit/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
       - name: Load pinned versions
         run: grep -E '^[A-Z_][A-Z0-9_]*=' .smallhours-toolkit/versions.env >> "$GITHUB_ENV"
       - name: Install yq (pinned)
@@ -230,8 +345,6 @@ jobs:
           "$T/report-usage.sh" "$pr" "${RUNNER_TEMP}/smallhours-result.json" address_review
 
   # ── T2 / T3: consumer CI outcome drives PR/issue state ─────────────────────
-  # Hard gate (DESIGN): same-repo head. The `agent`-label check is enforced
-  # inside state-manager.sh so a red CI on a human PR never summons anything.
   ci_state:
     if: >-
       github.event_name == 'workflow_run' &&
@@ -264,7 +377,6 @@ jobs:
             success) ci=success ;;
             *)       ci=failure ;;
           esac
-          # Resolve the PR: the event's association first, else by head branch.
           pr="$(jq -r '.workflow_run.pull_requests[0].number // empty' "$GITHUB_EVENT_PATH")"
           if [ -z "$pr" ]; then
             pr="$(gh pr list --head "${{ github.event.workflow_run.head_branch }}" \
@@ -275,12 +387,3 @@ jobs:
             exit 0
           fi
           "$T/state-manager.sh" "$pr" "$ci"
-
-  # ── schedule: no-op in Phase 1 (becomes the sweep in Phase 2) ──────────────
-  schedule_noop:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - run: |
-          echo "smallhours: Phase 1 has no scheduled work. Phase 2 wires this to the sweep."

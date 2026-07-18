@@ -29,8 +29,11 @@ needs-triage ─→ needs-info ─→ ready-for-agent ──→ agent-working �
      └─→ ready-for-human                               └──→ ready-for-human (any give-up exit)
 ```
 
-- `agent-working` — deliberately coarse (implementing, CI-fixing, conflict-resolving).
-  Fine-grained progress lives on the PR.
+- `ready-for-agent` — a validated **queue**, unbounded. Applying it authorizes
+  work but does not start it; the dispatcher (ADR 0005) promotes queued issues
+  into free slots, at most `max_concurrent` (default 3) worked at once.
+- `agent-working` — deliberately coarse (implementing, CI-fixing, conflict-resolving);
+  also the WIP-slot marker the dispatcher counts. Fine-grained progress lives on the PR.
 - `in-review` — the maintainer's queue: PR is ready, review is the only pending act.
 - `ready-for-human` — single failure exit; the reason goes in a comment, never a label.
 - Merge closes the issue via `Closes #N`.
@@ -54,7 +57,7 @@ mean nothing is red when the maintainer opens the PR.
 
 | # | Event | Effect |
 |---|---|---|
-| T1 | Maintainer applies `ready-for-agent` | Authorize (labeler has write; fail-closed, remove label + comment on deny) → issue `agent-working` → agent implements on `agent/issue-N` → deterministic step opens draft PR (never model-dependent) |
+| T1 | Maintainer applies `ready-for-agent` | Authorize (labeler has write; fail-closed, remove label + comment on deny) → issue stays `ready-for-agent` (validated + **queued**). A WIP-limited **dispatcher** (ADR 0005) promotes it to `agent-working` when a slot is free → agent implements on `agent/issue-N` → deterministic step opens draft PR (never model-dependent) |
 | T2 | CI green + CLEAN | PR ready + `ready-to-merge`; issue `in-review` |
 | T3 | CI red (Phase 1) | PR stays draft + `ci-failing`; issue `ready-for-human` |
 | T3' | CI red (Phase 2) | Auto-fix attempt N+1 of 3 (consecutive; reset on green) |
@@ -112,16 +115,20 @@ distinct from the maintainer.
 | auto-fix (P2) | claude-sonnet-5 | 25 |
 | resolve-conflict (P2) | claude-sonnet-5 | 20 |
 
-Also configurable: attempt cap (3), sweep cadence (15m), extra egress domains,
+Also configurable: max concurrent worked issues (`max_concurrent`, default 3 —
+the dispatcher's WIP cap, ADR 0005), attempt cap (3), sweep cadence (15m), extra egress domains,
 npm allowed (default false; when true, `ignore-scripts=true` enforced).
 No auto-escalation to bigger models in v1; `ready-for-human` is the escape
 hatch. Every agent run posts a usage comment (turns/duration) on the PR.
 
 ## Phases
 
-**Phase 1 — human-triggered loop:** authorize → implement → deterministic draft
-PR → CI → state-manager (T2/T3) → request-changes re-summon (T7) → cancellation
-(T9–T11). Every Claude invocation traces to an explicit maintainer act.
+**Phase 1 — human-triggered loop:** authorize → **queue → WIP-limited dispatcher**
+(ADR 0005) → implement → deterministic draft PR → CI → state-manager (T2/T3) →
+request-changes re-summon (T7) → cancellation (T9–T11). Every Claude invocation
+traces to an explicit maintainer act. (The dispatcher is a minimal slice of the
+Phase 2 sweep, pulled forward after the M5 bulk-trigger incident to bound the
+blast radius; the full sweep in Phase 2 subsumes it.)
 
 **Phase 2 — self-healing:** auto-fix loop (T3'/T4), sweep (T5/T6, watchdog,
 label reconciliation). Adopt only after Phase 1 has handled ~a dozen real

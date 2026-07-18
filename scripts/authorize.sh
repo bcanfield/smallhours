@@ -5,8 +5,10 @@
 #
 #   authorize.sh <issue-number> <actor-login>
 #
-# Success: issue -> agent-working, exit 0 (caller proceeds to implement).
-# Deny:    issue -> needs-triage, comment, exit 3 (caller must stop).
+# Grant: leave the issue `ready-for-agent` (validated + QUEUED), exit 0. The
+#        dispatcher (dispatch.sh) later promotes it to `agent-working` when a
+#        concurrency slot is free — authorize no longer starts work itself.
+# Deny:  issue -> needs-triage, comment, exit 3 (caller must stop).
 #
 # Env: GH_TOKEN, GITHUB_REPOSITORY (or a resolvable gh repo).
 set -euo pipefail
@@ -24,8 +26,9 @@ main() {
   perm="$(gh api "repos/$repo/collaborators/$actor/permission" --jq '.permission' 2>/dev/null || echo none)"
   case "$perm" in
     admin|maintain|write)
-      sh_log "authorize: $actor has '$perm' on $repo — granted"
-      state_set_issue "$issue" agent-working
+      # Validated. Leave it queued (ready-for-agent); the dispatcher starts it
+      # when a slot frees. Do NOT set agent-working here.
+      sh_log "authorize: $actor has '$perm' on $repo — granted, issue #$issue queued"
       exit 0
       ;;
     *)
