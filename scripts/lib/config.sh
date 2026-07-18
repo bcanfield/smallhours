@@ -51,6 +51,9 @@ _sh_default_max_turns() {
 _SH_DEFAULT_ATTEMPT_CAP=3
 _SH_DEFAULT_CI_WORKFLOW=ci
 _SH_DEFAULT_NPM_ALLOWED=false
+# Max issues in `agent-working` at once (the WIP cap the dispatcher enforces).
+# ready-for-agent is an unbounded queue; only this many run concurrently.
+_SH_DEFAULT_MAX_CONCURRENT=3
 
 # Populated by config_load with the config-as-JSON, or "{}" when no file exists.
 _SH_CONFIG_JSON=""
@@ -114,6 +117,11 @@ config_attempt_cap() {
 config_ci_workflow() {
   local v; v="$(_sh_get '.ci_workflow')"
   [ -n "$v" ] && echo "$v" || echo "$_SH_DEFAULT_CI_WORKFLOW"
+}
+
+config_max_concurrent() {
+  local v; v="$(_sh_get '.max_concurrent')"
+  [ -n "$v" ] && echo "$v" || echo "$_SH_DEFAULT_MAX_CONCURRENT"
 }
 
 # One domain per line (may be empty).
