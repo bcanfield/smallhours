@@ -121,6 +121,27 @@ npm allowed (default false; when true, `ignore-scripts=true` enforced).
 No auto-escalation to bigger models in v1; `ready-for-human` is the escape
 hatch. Every agent run posts a usage comment (turns/duration) on the PR.
 
+## Pocock protocol integration (M6, grilled 2026-07-17; ADR 0006)
+
+smallhours is the **AFK implementer** for repos following the Matt Pocock flow
+(grill → to-spec → to-tickets → `ready-for-agent`). Posture: **Pocock-aware,
+gracefully degrading** — the "fully described issue" contract is unchanged;
+Pocock artifacts are enrichment, and a repo without them behaves exactly as
+before. Grilling, specs, ticket breakdown, and triage stay human-gated outside
+the system.
+
+| Concern | Decision |
+|---|---|
+| Ticket ordering | Edge-aware dispatcher; promotable = all blocking edges cleared (ADR 0006) |
+| Edge store | Native issue dependencies; `## Blocked by` text upserted into them each tick |
+| Unblock | Blocker closed `COMPLETED`; `NOT_PLANNED` ejects dependents to `ready-for-human` |
+| Chains | Serialize on merge; stacked PRs out of scope (debt `chain-serialize-no-stacked-prs`) |
+| Tracker context | Deterministic pre-step inlines parent spec verbatim + one-line pointer per cleared blocker |
+| Checkout knowledge | Prompt directs agent to `CONTEXT.md` vocabulary, ADR guardrail (stop rather than contradict), `docs/agents/domain.md` |
+| Discipline | Condensed in prompt: TDD at spec-named seams; closing self-review vs acceptance criteria + spec |
+| Labels | `.smallhours.yml` `labels:` mapping (canonical → repo string); setup imports `triage-labels.md`; doctor warns on drift |
+| Write boundary | Knowledge layer read-only for agents; discoveries go in a "Decisions surfaced" PR section |
+
 ## Phases
 
 **Phase 1 — human-triggered loop:** authorize → **queue → WIP-limited dispatcher**
