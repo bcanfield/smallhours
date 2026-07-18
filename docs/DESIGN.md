@@ -121,7 +121,7 @@ npm allowed (default false; when true, `ignore-scripts=true` enforced).
 No auto-escalation to bigger models in v1; `ready-for-human` is the escape
 hatch. Every agent run posts a usage comment (turns/duration) on the PR.
 
-## Pocock protocol integration (M6, grilled 2026-07-17; ADR 0006)
+## Pocock protocol integration (M5.5, grilled 2026-07-17; ADR 0006)
 
 smallhours is the **AFK implementer** for repos following the Matt Pocock flow
 (grill → to-spec → to-tickets → `ready-for-agent`). Posture: **Pocock-aware,

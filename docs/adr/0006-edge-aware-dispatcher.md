@@ -115,10 +115,10 @@ chains make review-cadence serialization painful enough to justify stacked PRs.
 
 ---
 
-## Appendix — M6 spec and ticket breakdown
+## Appendix — M5.5 spec and ticket breakdown
 
 Recorded here by maintainer choice instead of being published to the tracker;
-publish as real issues (blockers first, edges as native dependencies) when M6
+publish as real issues (blockers first, edges as native dependencies) when M5.5
 starts, after M5 acceptance scenarios.
 
 ### Spec

@@ -187,7 +187,19 @@ Onboard one real repo; run the acceptance scenarios:
 
 Run ~a dozen real issues through before opening Phase 2.
 
-## Phase 2 milestones (after Milestone 5 sign-off)
+## Milestone 5.5 — Pocock protocol integration (after M5 sign-off; ADR 0006)
+
+Make smallhours the AFK implementer for repos using the Pocock flow
+(grill → to-spec → to-tickets → `ready-for-agent`). Design: DESIGN.md
+§ Pocock protocol integration; decisions + full spec and six-ticket DAG:
+**ADR 0006 appendix** (publish the tickets as real issues, blockers first with
+native dependency edges, when this milestone starts — debt
+`m6-tickets-in-adr-appendix`). Operational prerequisite: grant the Fixer App
+issue-dependencies write permission. Frontier at start: 06-1 (label mapping),
+06-4 (context assembly), 06-5 (prompt discipline); then 06-2 → 06-3
+(edge-aware dispatch, plan-change ejection) and 06-6 (setup & doctor).
+
+## Phase 2 milestones (after Milestone 5.5)
 
 - **M6 auto-fix:** `auto-fix.sh` on the `workflow_run` red path (replaces
   Phase 1's T3 routing): `agent`-labeled PRs only, ≤3 *consecutive* attempts
