@@ -1,0 +1,125 @@
+# release — the ONLY way the floating consumer tag moves (ADR 0002, ADR 0003).
+#
+# Consumers pin `uses: bcanfield/smallhours/.github/workflows/agent-loop.yml@v1`.
+# `v1` is a floating *channel* tag, not an immutable release. This workflow is
+# the sole mechanism that moves it: it cuts an immutable semver tag (vX.Y.Z) and
+# fast-forwards the channel tag to the same commit. Nothing else — no human,
+# no other workflow — is permitted to move `v1`. A compromised channel tag is
+# the accepted floating-tag risk (ADR 0002); keeping the move behind this one
+# workflow plus account hardening is the control.
+#
+# Pre-1.0 note (ADR 0003): 0.x releases are pre-stable but still float under the
+# `v1` channel so consumers can pin `@v1` from day one. Once a stable line ships,
+# a breaking change cuts v2.0.0 and floats `v2`; `v1` consumers stay put until
+# they opt in.
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Immutable release to cut, e.g. v0.1.0 (must be vMAJOR.MINOR.PATCH)
+        required: true
+        type: string
+      channel:
+        description: Floating major-channel tag to move (e.g. v1). 0.x may float any channel; 1.x+ must match its own major.
+        required: false
+        default: v1
+        type: string
+
+# Default GITHUB_TOKEN, not the Fixer App: a release tag never needs to
+# re-trigger CI, so the App identity (whose only reason to exist is CI
+# re-triggering, ADR 0001) is deliberately not used here.
+permissions:
+  contents: write
+
+# One release at a time; never cancel a half-pushed tag pair.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history + tags, so the immutability guard is honest
+
+      - name: Validate inputs and derive the channel
+        id: v
+        run: |
+          set -euo pipefail
+          version='${{ inputs.version }}'
+          channel='${{ inputs.channel }}'
+
+          if ! printf '%s' "$version" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::version must be vMAJOR.MINOR.PATCH (got '$version')"
+            exit 1
+          fi
+          if ! printf '%s' "$channel" | grep -Eq '^v[0-9]+$'; then
+            echo "::error::channel must be v<MAJOR> (got '$channel')"
+            exit 1
+          fi
+
+          # Strip leading 'v', take the major component.
+          major="${version#v}"; major="${major%%.*}"
+
+          # Pre-1.0 (0.x) floats under a maintainer-chosen channel (default v1 —
+          # ADR 0003). From 1.0.0 on, the channel MUST equal the release's own
+          # major, so nobody accidentally floats v1 off a v2.3.0 cut.
+          if [ "$major" != "0" ] && [ "$channel" != "v${major}" ]; then
+            echo "::error::${version} is >=1.0.0, so channel must be v${major} (got '$channel')"
+            exit 1
+          fi
+
+          echo "version=$version"   >> "$GITHUB_OUTPUT"
+          echo "channel=$channel"   >> "$GITHUB_OUTPUT"
+          echo "Cutting $version, floating channel $channel."
+
+      - name: Guard — the version tag must not already exist
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/${{ steps.v.outputs.version }}^{}" >/dev/null 2>&1; then
+            echo "::error::${{ steps.v.outputs.version }} already exists — semver tags are immutable. Cut a new patch/minor."
+            exit 1
+          fi
+
+      - name: Configure release identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Cut the immutable version tag
+        run: |
+          set -euo pipefail
+          git tag -a "${{ steps.v.outputs.version }}" -m "smallhours ${{ steps.v.outputs.version }}"
+          git push origin "refs/tags/${{ steps.v.outputs.version }}"
+
+      - name: Fast-forward the floating channel tag
+        run: |
+          set -euo pipefail
+          # -f locally and --force on push: the channel tag intentionally moves.
+          git tag -f "${{ steps.v.outputs.channel }}" "${{ steps.v.outputs.version }}"
+          git push --force origin "refs/tags/${{ steps.v.outputs.channel }}"
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.v.outputs.version }}" \
+            --repo "${{ github.repository }}" \
+            --title "${{ steps.v.outputs.version }}" \
+            --generate-notes
+
+      - name: Summary
+        run: |
+          {
+            echo "### Released \`${{ steps.v.outputs.version }}\`"
+            echo ""
+            echo "- Immutable tag \`${{ steps.v.outputs.version }}\` created."
+            echo "- Floating channel \`${{ steps.v.outputs.channel }}\` now points at it."
+            echo "- Consumers pinned \`@${{ steps.v.outputs.channel }}\` pick this up on their next run."
+          } >> "$GITHUB_STEP_SUMMARY"
