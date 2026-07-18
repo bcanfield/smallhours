@@ -21,9 +21,13 @@ sh_repo() {
   fi
 }
 
-# Fail early with an actionable message if the auth contract isn't met.
+# Fail early with an actionable message if the auth contract isn't met. Accepts
+# an env token (CI / the reusable workflow) OR gh's own login (a maintainer
+# running a script by hand) — gh itself resolves either.
 sh_require_auth() {
-  [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] || sh_die "GH_TOKEN (or GITHUB_TOKEN) must be set"
+  [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] && return 0
+  gh auth status >/dev/null 2>&1 && return 0
+  sh_die "no GitHub auth — set GH_TOKEN/GITHUB_TOKEN or run 'gh auth login'"
 }
 
 sh_comment_issue() { # issue-number body

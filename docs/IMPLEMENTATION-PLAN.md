@@ -138,7 +138,21 @@ timeouts (implement 40m, others 15m), narrowest per-job permissions.
 
 Acceptance: all Phase 1 transitions fire from a stub-equipped test repo.
 
-## Milestone 4 — Consumer onboarding
+## Milestone 4 — Consumer onboarding — ✅ DONE 2026-07-17
+
+> `setup-repo.sh` + `doctor.sh` built and run live against the guinea-pig
+> `bcanfield/mediamtx-connect`: 13-label vocabulary created, secret-scanning
+> enabled, the CI workflow name auto-detected (`CI`) and substituted into the
+> stub/config. Both scripts are **ruleset-aware** (the real-world case the plan
+> didn't anticipate): mediamtx-connect protects `main` with a *ruleset* not
+> legacy protection, so setup lands the stub + config via an **onboarding PR**
+> (PR #194) instead of a rejected direct push and leaves the existing ruleset
+> untouched; `doctor` reads effective rules (not just legacy). `doctor` is clean
+> except the stub/config, which read MISSING until PR #194 is merged (correct —
+> that IS the "breaking a precondition fails doctor" behaviour). Deferrals in
+> `docs/debt/`: Fixer-App install is a manual UI step (not automatable with a
+> user token), and required-check auto-detection is weak for rulesetless repos.
+> **The App-install + `ready-for-agent` trigger is Milestone 5.**
 
 - `stub/agent-loop.yml`: all five triggers (schedule included, no-op),
   permissions ceiling, one `uses: …/agent-loop.yml@v1`, secret wiring
