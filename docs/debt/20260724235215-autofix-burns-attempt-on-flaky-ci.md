@@ -13,3 +13,5 @@ created: 2026-07-24
 ---
 
 A red CI run caused by a flaky or unrelated test consumes an auto-fix attempt (M5.5 saw exactly this live: an unrelated E2E flake on mediamtx-connect). The prompt tells the agent to make NO changes when the failure looks unrelated, and auto-fix.sh treats a no-diff run as a give-up — so a flake becomes an early hand-off to a human rather than a wasted Claude fix, but there is no "just re-run CI" primitive that would let the system retry a suspected flake without spending an attempt or a human. Green still resets the counter, so the cap can never fire from flakes separated by successes.
+
+**Observed again 2026-07-25 during M6 validation** (PR #249: 3 unrelated E2E specs red on the rescue push while main was green). Useful fact for the fix: `gh run rerun --failed` re-fires the `workflow_run` completed event, so ci_state re-evaluates the new conclusion — a "suspected flake → rerun once before spending an attempt" step in state-manager (or the M7 sweep) has a working primitive.
