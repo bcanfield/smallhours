@@ -194,8 +194,10 @@ Make smallhours the AFK implementer for repos using the Pocock flow
 § Pocock protocol integration; decisions + full spec and six-ticket DAG:
 **ADR 0006 appendix** (publish the tickets as real issues, blockers first with
 native dependency edges, when this milestone starts — debt
-`m6-tickets-in-adr-appendix`). Operational prerequisite: grant the Fixer App
-issue-dependencies write permission. Frontier at start: 06-1 (label mapping),
+`m6-tickets-in-adr-appendix`). ~~Operational prerequisite: grant the Fixer App
+issue-dependencies write permission.~~ (Moot — dependencies endpoints ride
+under the App's existing issues:write; ADR 0006 appendix correction.)
+Frontier at start: 06-1 (label mapping),
 06-4 (context assembly), 06-5 (prompt discipline); then 06-2 → 06-3
 (edge-aware dispatch, plan-change ejection) and 06-6 (setup & doctor).
 

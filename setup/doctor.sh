@@ -69,11 +69,13 @@ check_triage_doc() { # repo default-branch
     || bad "triage-labels.md lacks the system-owned-states note (drift — re-run setup)"
 }
 
-# ── Fixer App permissions (ADR 0006: edge upserts need issue-dependencies) ───
-# App permissions are only readable AS the App. With AGENT_APP_ID +
-# AGENT_APP_PRIVATE_KEY_FILE set we mint a JWT and check for real; otherwise
-# this is a note, not a pass — a missing permission still fails LOUDLY at
-# dispatch time (upsert comments and fails closed), so nothing is silent.
+# ── Fixer App permissions (ADR 0006: edge upserts need issues WRITE) ─────────
+# The dependencies endpoints ride under the "Issues" permission — GitHub has
+# no separate issue-dependencies permission (docs: permissions-required-for-
+# github-apps, verified 2026-07-24). App permissions are only readable AS the
+# App. With AGENT_APP_ID + AGENT_APP_PRIVATE_KEY_FILE set we mint a JWT and
+# check for real; otherwise this is a note, not a pass — a missing permission
+# still fails LOUDLY at dispatch time (upsert comments and fails closed).
 _app_jwt() { # app-id key-file
   local now hdr pld sig
   now="$(date +%s)"
@@ -86,7 +88,7 @@ _app_jwt() { # app-id key-file
 
 check_app_permissions() { # repo
   if [ -z "${AGENT_APP_ID:-}" ] || [ -z "${AGENT_APP_PRIVATE_KEY_FILE:-}" ] || [ ! -f "${AGENT_APP_PRIVATE_KEY_FILE:-/nonexistent}" ]; then
-    note "Fixer App permissions not verifiable with a user token — set AGENT_APP_ID + AGENT_APP_PRIVATE_KEY_FILE to check. Needed: issues write + issue-dependencies write (edge upserts fail closed and comment if missing)"
+    note "Fixer App permissions not verifiable with a user token — set AGENT_APP_ID + AGENT_APP_PRIVATE_KEY_FILE to check. Needed: issues WRITE (covers issue dependencies; edge upserts fail closed and comment if missing)"
     return
   fi
   local jwt perms
@@ -97,17 +99,11 @@ check_app_permissions() { # repo
     bad "Fixer App does not appear to be installed on $1 (or the JWT was rejected)"
     return
   fi
-  local issues deps
+  local issues
   issues="$(printf '%s' "$perms" | jq -r '.issues // "none"')"
-  [ "$issues" = "write" ] && ok "App permission issues: write" || bad "App permission issues: $issues (need write)"
-  deps="$(printf '%s' "$perms" | jq -r 'to_entries[] | select(.key | test("dependenc")) | "\(.key)=\(.value)"')"
-  if [ -n "$deps" ]; then
-    printf '%s\n' "$deps" | grep -q '=write$' \
-      && ok "App permission $deps" \
-      || bad "App permission $deps (need write — edge upserts will fail closed)"
-  else
-    note "no dependencies-specific permission key reported; full map: $(printf '%s' "$perms" | jq -c .)"
-  fi
+  [ "$issues" = "write" ] \
+    && ok "App permission issues: write (covers issue dependencies — edge upserts OK)" \
+    || bad "App permission issues: $issues (need write — labels AND edge upserts will fail)"
 }
 
 check_stub() { # repo default-branch
