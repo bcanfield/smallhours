@@ -20,6 +20,8 @@
 #   config_ci_workflow
 #   config_egress_extra_domains       one domain per line
 #   config_npm_allowed                prints "true"/"false"
+#   label_for <canonical>             repo label string for a canonical name
+#   state_labels_resolved             resolved state axis, one per line
 #   Label constants + helpers (see below).
 
 # Guard against double-sourcing.
@@ -36,6 +38,12 @@ SMALLHOURS_STATE_LABELS=(
 SMALLHOURS_PR_LABELS=(agent ci-failing ready-to-merge human-needed)
 # Category axis — applied during grilling, used as-is.
 SMALLHOURS_CATEGORY_LABELS=(bug enhancement)
+
+# Labels the reusable workflow gates on in expression-time `if:` clauses, where
+# consumer config cannot be read. Remapping any of these is rejected at
+# config_load (fail loud, never a silently dead trigger). v1 constraint — see
+# docs/debt trigger-labels-not-mappable.
+SMALLHOURS_FIXED_LABELS=(ready-for-agent agent-working agent)
 
 # ── Defaults (DESIGN.md) ──────────────────────────────────────────────────────
 _sh_default_model()     { echo "claude-sonnet-5"; }
@@ -85,11 +93,91 @@ config_load() {
       return 1
     fi
     [ -n "$_SH_CONFIG_JSON" ] || _SH_CONFIG_JSON="{}"
+    # On a rejected mapping, drop the parsed JSON — a cached bad config must
+    # not answer later label_for calls as if it had loaded.
+    _sh_labels_validate || { _SH_CONFIG_JSON=""; return 1; }
   else
     # No file is the normal path — every key is optional, defaults apply.
     _SH_CONFIG_JSON="{}"
   fi
   return 0
+}
+
+# Is $1 a canonical label name (any axis)?
+_sh_is_canonical_label() {
+  local l
+  for l in "${SMALLHOURS_STATE_LABELS[@]}" "${SMALLHOURS_PR_LABELS[@]}" \
+           "${SMALLHOURS_CATEGORY_LABELS[@]}"; do
+    [ "$l" = "$1" ] && return 0
+  done
+  return 1
+}
+
+# Validate the labels: mapping at load time so a broken mapping aborts every
+# stage up front instead of half-applying (fail-loud, same posture as a broken
+# YAML file). Checks: keys are canonical names; the workflow-gated labels are
+# not remapped; no two canonical names resolve to the same repo string (a
+# collision would corrupt the exactly-one state invariant).
+_sh_labels_validate() {
+  local keys k
+  keys="$(printf '%s' "$_SH_CONFIG_JSON" | jq -r '.labels // {} | keys[]' 2>/dev/null)" || {
+    echo "smallhours: config 'labels:' is not a map of canonical -> repo label" >&2
+    return 1
+  }
+  for k in $keys; do
+    if ! _sh_is_canonical_label "$k"; then
+      echo "smallhours: config labels: unknown canonical label '$k'" >&2
+      return 1
+    fi
+    local f
+    for f in "${SMALLHOURS_FIXED_LABELS[@]}"; do
+      if [ "$k" = "$f" ]; then
+        echo "smallhours: config labels: '$k' triggers the workflow and cannot be remapped (v1)" >&2
+        return 1
+      fi
+    done
+  done
+  # Collision check across ALL axes (category labels share issues with the
+  # state axis, PR markers share PRs with it).
+  local resolved dupes
+  resolved="$(
+    for k in "${SMALLHOURS_STATE_LABELS[@]}" "${SMALLHOURS_PR_LABELS[@]}" \
+             "${SMALLHOURS_CATEGORY_LABELS[@]}"; do
+      _sh_label_raw "$k"
+    done
+  )"
+  dupes="$(printf '%s\n' "$resolved" | sort | uniq -d)"
+  if [ -n "$dupes" ]; then
+    echo "smallhours: config labels: two canonical labels resolve to the same string: $dupes" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Mapping lookup without canonical-name validation (internal).
+_sh_label_raw() { # canonical
+  local v; v="$(printf '%s' "$_SH_CONFIG_JSON" | jq -r ".labels[\"$1\"] // empty")"
+  [ -n "$v" ] && printf '%s\n' "$v" || printf '%s\n' "$1"
+}
+
+# THE resolver: canonical label name -> the string that actually appears on
+# this repo's issues/PRs. No script may reference a repo label except through
+# this (or via state.sh, which resolves internally). Unknown canonical names
+# are a programming error — die loudly.
+label_for() { # canonical
+  config_load || return 1
+  if ! _sh_is_canonical_label "$1"; then
+    echo "smallhours: label_for: not a canonical label: '$1'" >&2
+    return 1
+  fi
+  _sh_label_raw "$1"
+}
+
+# The full state axis as it appears on this repo, one label per line.
+state_labels_resolved() {
+  config_load || return 1
+  local l
+  for l in "${SMALLHOURS_STATE_LABELS[@]}"; do _sh_label_raw "$l"; done
 }
 
 # jq getter against the loaded config; prints nothing (empty) when the key is

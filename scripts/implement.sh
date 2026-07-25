@@ -19,6 +19,7 @@ _dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_dir/lib/common.sh"
 . "$_dir/lib/state.sh"
 . "$_dir/lib/claude-run.sh"
+. "$_dir/lib/tracker-context.sh"
 
 # Kept OUTSIDE the consumer working tree so `git add -A` never commits it.
 RESULT_JSON="${SMALLHOURS_RESULT_JSON:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/smallhours-result.json}"
@@ -48,10 +49,18 @@ main() {
   git fetch --quiet origin "$base"
   git checkout -B "$branch" "origin/$base"
 
-  # Build the prompt: template + issue context (jq quotes the body safely).
-  local ctx prompt; ctx="$(mktemp)"; prompt="$(mktemp)"
-  gh issue view "$issue" --repo "$repo" --json number,title,body \
-    --jq '"Issue #\(.number): \(.title)\n\n\(.body // "(no description)")"' > "$ctx"
+  # Build the prompt: template + issue context (jq quotes the body safely),
+  # then the deterministic tracker-context pre-step (ADR 0006 / 06-4): parent
+  # spec inlined verbatim + one line per cleared blocker. Enrichment only —
+  # its failure never fails the run.
+  local ctx prompt ijson bodyf
+  ctx="$(mktemp)"; prompt="$(mktemp)"; ijson="$(mktemp)"; bodyf="$(mktemp)"
+  gh issue view "$issue" --repo "$repo" --json number,title,body > "$ijson"
+  jq -r '"Issue #\(.number): \(.title)\n\n\(.body // "(no description)")"' "$ijson" > "$ctx"
+  jq -r '.body // ""' "$ijson" > "$bodyf"
+  tracker_context "$issue" "$bodyf" >> "$ctx" \
+    || sh_log "tracker-context: enrichment failed — continuing with plain issue context"
+  rm -f "$ijson" "$bodyf"
   sh_render_prompt "$_dir/../prompts/implement.md" "$ctx" "$prompt"
 
   # Run. claude_run returns non-zero on give-up (CLI error or is_error).
