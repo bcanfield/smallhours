@@ -32,8 +32,10 @@ main() {
   sh_require_auth
   local repo K; repo="$(sh_repo)"; K="$(config_max_concurrent)"
 
-  local qdir; qdir="$(mktemp -d "${TMPDIR:-/tmp}/smallhours-dispatch.XXXXXX")"
-  trap 'rm -rf "$qdir"' EXIT
+  # NOT local: the EXIT trap fires after main() returns, when a local would
+  # already be out of scope — under set -u that failed every successful run.
+  qdir="$(mktemp -d "${TMPDIR:-/tmp}/smallhours-dispatch.XXXXXX")"
+  trap 'rm -rf "${qdir:-}"' EXIT
 
   # The queue, oldest first (issue number ascending is a stable FIFO proxy).
   gh issue list --repo "$repo" --state open --label "$(label_for ready-for-agent)" \
