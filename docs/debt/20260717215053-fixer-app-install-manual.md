@@ -5,7 +5,7 @@ principal: 3h
 interest: onboarding isn't truly one-command; a missed install fails silently at first run
 hotspot: setup/setup-repo.sh
 business_capability: infrastructure
-payoff_trigger: onboarding a second/third consumer repo, or Milestone 5 if a run fails on a missing install
+payoff_trigger: onboarding the next consumer repo (M5/M5.5 ran fine on the one existing install)
 quadrant: prudent-deliberate
 category: infrastructure
 ai_authored: true
