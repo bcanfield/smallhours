@@ -2,24 +2,32 @@
 
 # smallhours
 
-It does its best work while you're asleep.
+> The best ideas happen away from the keyboard.
 
-The whole job now: write good issues, review good PRs. Agents handle
-everything between.
+Software development shouldn't require constant supervision.
+
+Write good issues. Review good pull requests. Spend the rest of your time
+thinking, designing, or simply stepping away. Agents handle the implementation
+between those moments.
 
 ## The loop
 
-Fill the board with issues worth doing. Label what's ready:
-`ready-for-agent`.
+Fill the board with issues worth solving. Label what's ready:
 
-Leave.
+`ready-for-agent`
 
-Sandboxed agents work the queue inside your repo's CI, each issue on its
-own branch, each branch a draft PR, while you're off doing whatever you
-left to do. Red CI, they fix. Changes requested, they revise. Green, they
-wait.
+Then leave.
 
-You review. You merge. Issues close; branches disappear.
+Sandboxed agents continuously work the queue inside your repository's CI.
+Each issue becomes its own branch. Each branch becomes a draft pull request.
+
+If CI fails, they fix it.
+If changes are requested, they revise it.
+When everything is green, they wait.
+
+You come back to finished work—not an endless stream of notifications.
+
+Review. Merge. Repeat.
 
 ## The board
 
@@ -27,14 +35,20 @@ You review. You merge. Issues close; branches disappear.
 ready-for-agent → agent-working → in-review → closed
 ```
 
-One state label per issue, always. The board never lies.
+One state label per issue. The board always reflects reality.
 
-When an issue needs a person, it says so, `ready-for-human`, and the
-agents move on.
+If an issue requires human judgment, it's marked `ready-for-human`, and the
+agents continue with the next task.
 
 ## What stays yours
 
-The merge button. Always. Agents can't grant approvals.
+Architecture.
+
+Judgment.
+
+The merge button.
+
+Agents can build, iterate, and revise, but approval always belongs to you.
 
 ## Start
 
@@ -42,5 +56,5 @@ The merge button. Always. Agents can't grant approvals.
 setup/setup-repo.sh <owner/repo>
 ```
 
-[Getting started](docs/GETTING-STARTED.md) has the rest, including exactly
-how far the machine is trusted.
+See [Getting started](docs/GETTING-STARTED.md) for setup, trust boundaries,
+and how autonomous execution is kept contained.
