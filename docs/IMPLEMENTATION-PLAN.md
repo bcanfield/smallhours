@@ -227,6 +227,8 @@ max_concurrent: 3          # WIP cap: max issues in agent-working at once (ADR 0
 ci_workflow: ci            # name the workflow_run gate keys off
 egress_extra_domains: []   # appended to the sandbox allowlist
 npm_allowed: false         # when true, ignore-scripts=true is enforced
+labels: {}                 # canonical → repo label string (06-1); ready-for-agent,
+                           # agent-working, agent are fixed in v1 (workflow-gated)
 ```
 
 ## Risk register

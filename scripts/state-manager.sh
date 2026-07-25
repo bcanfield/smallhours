@@ -24,7 +24,8 @@ main() {
   sh_require_auth
 
   # Defensive gate: only automation-owned PRs.
-  if ! gh pr view "$pr" --repo "$repo" --json labels --jq '.labels[].name' | grep -Fxq agent; then
+  if ! gh pr view "$pr" --repo "$repo" --json labels --jq '.labels[].name' \
+       | grep -Fxq "$(label_for agent)"; then
     sh_log "state-manager: PR #$pr has no \`agent\` label — not ours, ignoring"
     exit 0
   fi

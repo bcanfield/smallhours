@@ -67,9 +67,23 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
+      # Label mapping (ADR 0006 / 06-1): every job whose script touches labels
+      # needs the consumer config so canonical names resolve.
+      - name: Install yq + fetch consumer config
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          . .smallhours-toolkit/versions.env
+          curl -fsSL -o "$RUNNER_TEMP/yq" \
+            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
+          gh api "repos/${{ github.repository }}/contents/.smallhours.yml" \
+            --jq '.content' 2>/dev/null | base64 -d > "$RUNNER_TEMP/smallhours-config.yml" || true
       - id: gate
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
+          SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
         run: |
           set -uo pipefail
           if .smallhours-toolkit/scripts/authorize.sh \
@@ -273,8 +287,21 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
+      # cancel.sh sets mappable state labels — needs the consumer config.
+      - name: Install yq + fetch consumer config
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          . .smallhours-toolkit/versions.env
+          curl -fsSL -o "$RUNNER_TEMP/yq" \
+            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
+          gh api "repos/${{ github.repository }}/contents/.smallhours.yml" \
+            --jq '.content' 2>/dev/null | base64 -d > "$RUNNER_TEMP/smallhours-config.yml" || true
       - env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
+          SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
         run: |
           set -euo pipefail
           T=.smallhours-toolkit/scripts
@@ -368,8 +395,21 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
+      # state-manager.sh sets mappable state/marker labels — needs the config.
+      - name: Install yq + fetch consumer config
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+          . .smallhours-toolkit/versions.env
+          curl -fsSL -o "$RUNNER_TEMP/yq" \
+            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
+          gh api "repos/${{ github.repository }}/contents/.smallhours.yml" \
+            --jq '.content' 2>/dev/null | base64 -d > "$RUNNER_TEMP/smallhours-config.yml" || true
       - env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
+          SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
         run: |
           set -euo pipefail
           T=.smallhours-toolkit/scripts

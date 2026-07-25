@@ -22,7 +22,7 @@ _close_agent_pr_for_issue() { # issue-number reason
   local issue="$1" reason="$2" repo pr head
   repo="$(sh_repo)"
   # Find an open PR whose head branch is this issue's agent branch family.
-  pr="$(gh pr list --repo "$repo" --state open --label agent \
+  pr="$(gh pr list --repo "$repo" --state open --label "$(label_for agent)" \
         --json number,headRefName \
         --jq "[.[] | select(.headRefName | test(\"^agent/issue-${issue}(-r[0-9]+)?$\"))] | .[0].number" 2>/dev/null || true)"
   [ -n "$pr" ] || { sh_log "cancel: no open agent PR for issue #$issue"; return 0; }
@@ -48,7 +48,7 @@ main() {
       # The issue is now state-less; ready-for-human keeps the exactly-one
       # invariant and matches "any give-up exit -> ready-for-human".
       state_set_issue "$num" ready-for-human
-      sh_comment_issue "$num" "↩️ smallhours stopped because its state label was removed. Marked \`ready-for-human\`."
+      sh_comment_issue "$num" "↩️ smallhours stopped because its state label was removed. Marked \`$(label_for ready-for-human)\`."
       ;;
     pr-closed)      # T9 — PR closed without merging.
       local issue; issue="$(sh_issue_from_pr "$num")"

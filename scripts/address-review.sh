@@ -35,7 +35,8 @@ main() {
     exit 0
   fi
   # Gate 2: only automation-owned PRs.
-  if ! gh pr view "$pr" --repo "$repo" --json labels --jq '.labels[].name' | grep -Fxq agent; then
+  if ! gh pr view "$pr" --repo "$repo" --json labels --jq '.labels[].name' \
+       | grep -Fxq "$(label_for agent)"; then
     sh_log "address-review: PR #$pr not \`agent\`-owned — ignoring"
     exit 0
   fi
