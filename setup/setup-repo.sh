@@ -87,7 +87,7 @@ verify_secrets() { # repo
     sh_log "✓ all three Fixer secrets present"
   fi
   sh_log "  reminder: ensure the Fixer GitHub App is INSTALLED on $repo (UI: App → Install)"
-  sh_log "  reminder: the App needs ISSUE-DEPENDENCIES write permission — the edge-aware dispatcher upserts native relations (ADR 0006)"
+  sh_log "  reminder: the App needs issues WRITE — that permission also covers the native issue-dependency upserts (ADR 0006; no separate dependencies permission exists)"
 }
 
 detect_ci_workflow() { # repo

@@ -138,7 +138,10 @@ mapping, strict read-only knowledge layer.
 **Implementation decisions.** All per the Decision section above, plus: the
 Fixer App gains issue-dependencies write permission (operational step, verified
 by doctor); `address-review.md` receives the knowledge + read-only prompt
-additions but not the TDD/self-review block.
+additions but not the TDD/self-review block. *Correction 2026-07-24: GitHub has
+no separate issue-dependencies permission — the dependencies endpoints ride
+under the "Issues" permission (write), which the App already holds. No
+operational step needed; doctor verifies issues:write.*
 
 **Testing decisions.** Graph logic (promotable computation, cycle detection,
 ref parsing) factored into pure functions exercised against fixture JSON;
