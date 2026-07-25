@@ -43,9 +43,10 @@ main() {
   # One snapshot of the open agent PRs drives all three passes.
   local prs_json
   prs_json="$(gh pr list --repo "$repo" --state open --label "$(label_for agent)" \
-                --limit 100 --json number,isDraft,mergeStateStatus,headRefName,isCrossRepository)"
+                --limit 100 --json number,isDraft,mergeStateStatus,headRefName,isCrossRepository,labels)"
 
-  local conflict_pr=""
+  local conflict_pr="" human_needed
+  human_needed="$(label_for human-needed)"
   local n merge cross action
 
   # ── T5 / T6 / T2 re-eval over the agent PRs ────────────────────────────────
@@ -60,7 +61,14 @@ main() {
     action="$(sweep_merge_action "$merge")"
     case "$action" in
       conflict)
-        if [ -z "$conflict_pr" ]; then
+        # A prior resolve attempt gave up and marked the PR human-needed:
+        # retrying every tick would spend Claude forever on the same wall.
+        # A human clearing the label (or pushing a fix) re-arms the stage.
+        if jq -e --argjson n "$n" --arg l "$human_needed" \
+             '.[] | select(.number == $n) | any(.labels[]?; .name == $l)' \
+             <<< "$prs_json" >/dev/null; then
+          sh_log "sweep: PR #$n is DIRTY but marked $human_needed — awaiting a human (remove the label to retry)"
+        elif [ -z "$conflict_pr" ]; then
           conflict_pr="$n"
           sh_log "sweep: PR #$n is DIRTY — scheduling conflict resolution (T6)"
         else

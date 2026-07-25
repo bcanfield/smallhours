@@ -6,7 +6,6 @@
 version: 1
 
 # Per-stage Claude model. Default: claude-sonnet-5 for every stage.
-# resolve_conflict is Phase 2 (M7).
 models:
   implement: claude-sonnet-5
   address_review: claude-sonnet-5
@@ -14,7 +13,6 @@ models:
   resolve_conflict: claude-sonnet-5
 
 # Per-stage --max-turns ceiling.
-# resolve_conflict is Phase 2 (M7).
 max_turns:
   implement: 50
   address_review: 30
