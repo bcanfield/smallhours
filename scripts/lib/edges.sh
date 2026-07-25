@@ -148,7 +148,7 @@ edges_reconcile_issue() { # issue-number body-file
           sh_log "edges: recorded #$issue blocked-by #$n"
         else
           edges_comment_once "$issue" "smallhours:edge-upsert-failed:$issue:$n" \
-            "⚠️ smallhours could not record the dependency on #$n as a native issue relation (is the Fixer App missing the issue-dependencies permission? \`doctor\` checks this). Keeping this issue **blocked** until the edge can be recorded."
+            "⚠️ smallhours could not record the dependency on #$n as a native issue relation (is the Fixer App missing issues WRITE permission? \`doctor\` checks this). Keeping this issue **blocked** until the edge can be recorded."
           sh_log "edges: UPSERT FAILED #$issue blocked-by #$n — failing closed"
           bad=1
         fi
