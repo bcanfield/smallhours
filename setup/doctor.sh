@@ -6,17 +6,22 @@
 # Re-checks everything setup-repo.sh establishes, plus stub version drift.
 # Exits NONZERO on any problem, so it can gate a scheduled toolkit-repo audit
 # across every onboarded repo. Read-only: never mutates the consumer.
+#
+# Every ✗/⚠ carries its one-line remedy (M8): an exact command, or an anchor
+# into docs/GETTING-STARTED.md. ⚠ is degraded-but-not-failing (exit stays 0).
 set -euo pipefail
 
 _dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _root="$(cd "$_dir/.." && pwd)"
 . "$_root/scripts/lib/common.sh"
-. "$_root/scripts/lib/config.sh"   # label vocabulary
+. "$_root/scripts/lib/config.sh"      # label vocabulary
+. "$_root/scripts/lib/onboarding.sh"  # App JWT + install evidence
 
 EXPECT_REF="v1"
 FAILED=0
 ok()   { printf '  ✓ %s\n' "$*"; }
 bad()  { printf '  ✗ %s\n' "$*"; FAILED=1; }
+warn() { printf '  ⚠ %s\n' "$*"; }
 note() { printf '  … %s\n' "$*"; }
 
 # Fetch a file's decoded contents from the consumer (empty if absent).
@@ -32,7 +37,7 @@ load_consumer_config() { # repo default-branch
     if config_load; then
       ok ".smallhours.yml parses (labels mapping valid)"
     else
-      bad ".smallhours.yml invalid (labels mapping?) — checking canonical labels instead"
+      bad ".smallhours.yml invalid, checking canonical labels instead — fix: edit its labels: mapping (schema: bottom of docs/IMPLEMENTATION-PLAN.md)"
       export SMALLHOURS_CONFIG="$tmp.absent"
     fi
   else
@@ -41,9 +46,13 @@ load_consumer_config() { # repo default-branch
 }
 
 check_secrets() { # repo
-  local present s; present="$(gh secret list --repo "$1" --json name --jq '.[].name' 2>/dev/null || gh secret list --repo "$1" | awk '{print $1}')"
+  local present s fix; present="$(gh secret list --repo "$1" --json name --jq '.[].name' 2>/dev/null || gh secret list --repo "$1" | awk '{print $1}')"
   for s in AGENT_APP_ID AGENT_APP_PRIVATE_KEY CLAUDE_CODE_OAUTH_TOKEN; do
-    printf '%s\n' "$present" | grep -Fxq "$s" && ok "secret $s" || bad "secret $s missing"
+    case "$s" in
+      CLAUDE_CODE_OAUTH_TOKEN) fix="claude setup-token, then gh secret set $s --repo $1" ;;
+      *)                       fix="setup/create-app.sh $1 (sets both App secrets)" ;;
+    esac
+    printf '%s\n' "$present" | grep -Fxq "$s" && ok "secret $s" || bad "secret $s missing — fix: $fix"
   done
 }
 
@@ -56,7 +65,7 @@ check_labels() { # repo
     printf '%s\n' "$have" | grep -Fxq "$rname" || miss+=("$rname")
   done
   [ "${#miss[@]}" -eq 0 ] && ok "all ${#want[@]} labels present (mapping-resolved)" \
-    || bad "missing labels (mapping drift): ${miss[*]}"
+    || bad "missing labels: ${miss[*]} — fix: setup/setup-repo.sh $1 (recreates the vocabulary)"
   # Attempt counters (T3', M6) are created on demand by state.sh, so absence is
   # cosmetic (they'd appear uncolored) — a note, not a failure.
   local i cap missing_attempts=()
@@ -75,58 +84,59 @@ check_labels() { # repo
 # system-owned note is the contract; a hand-deleted or pre-setup repo fails.
 check_triage_doc() { # repo default-branch
   local content; content="$(_fetch "$1" "docs/agents/triage-labels.md" "$2")"
-  if [ -z "$content" ]; then bad "docs/agents/triage-labels.md missing (setup imports it)"; return; fi
+  if [ -z "$content" ]; then bad "docs/agents/triage-labels.md missing — fix: setup/setup-repo.sh $1 (imports/generates it)"; return; fi
   printf '%s' "$content" | grep -q '## System-owned states' \
     && ok "triage-labels.md present with system-owned-states note" \
-    || bad "triage-labels.md lacks the system-owned-states note (drift — re-run setup)"
+    || bad "triage-labels.md lacks the system-owned-states note — fix: setup/setup-repo.sh $1 (re-appends it)"
 }
 
-# ── Fixer App permissions (ADR 0006: edge upserts need issues WRITE) ─────────
+# ── Fixer App install + permissions (ADR 0006: edge upserts need issues WRITE)
 # The dependencies endpoints ride under the "Issues" permission — GitHub has
 # no separate issue-dependencies permission (docs: permissions-required-for-
 # github-apps, verified 2026-07-24). App permissions are only readable AS the
 # App. With AGENT_APP_ID + AGENT_APP_PRIVATE_KEY_FILE set we mint a JWT and
-# check for real; otherwise this is a note, not a pass — a missing permission
-# still fails LOUDLY at dispatch time (upsert comments and fails closed).
-_app_jwt() { # app-id key-file
-  local now hdr pld sig
-  now="$(date +%s)"
-  _b64url() { openssl base64 -A | tr -d '=' | tr '/+' '_-'; }
-  hdr="$(printf '{"alg":"RS256","typ":"JWT"}' | _b64url)"
-  pld="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now-60))" "$((now+540))" "$1" | _b64url)"
-  sig="$(printf '%s.%s' "$hdr" "$pld" | openssl dgst -sha256 -sign "$2" -binary | _b64url)"
-  printf '%s.%s.%s' "$hdr" "$pld" "$sig"
-}
-
-check_app_permissions() { # repo
+# check for real; without them we fall back to secret-free run evidence (M8):
+# a past successful agent-loop run proves token minting, i.e. the App is
+# installed with working credentials. A missing permission still fails LOUDLY
+# at dispatch time (upsert comments and fails closed).
+check_app_install() { # repo
   if [ -z "${AGENT_APP_ID:-}" ] || [ -z "${AGENT_APP_PRIVATE_KEY_FILE:-}" ] || [ ! -f "${AGENT_APP_PRIVATE_KEY_FILE:-/nonexistent}" ]; then
-    note "Fixer App permissions not verifiable with a user token — set AGENT_APP_ID + AGENT_APP_PRIVATE_KEY_FILE to check. Needed: issues WRITE (covers issue dependencies; edge upserts fail closed and comment if missing)"
+    case "$(ob_app_install_evidence "$1")" in
+      proven)
+        ok "Fixer App installed (a past agent-loop run succeeded, so App-token minting works)" ;;
+      no-runs)
+        warn "Fixer App likely NOT installed (no agent-loop runs yet, so token minting is unproven) — fix: setup/create-app.sh $1 (or the App page → Install App)" ;;
+      *)
+        warn "Fixer App install unproven (agent-loop has run, never successfully) — check https://github.com/$1/actions; if runs die at app-token, fix: setup/create-app.sh $1" ;;
+    esac
+    note "authoritative check: set AGENT_APP_ID + AGENT_APP_PRIVATE_KEY_FILE (create-app.sh saves the key under ~/.smallhours/) and re-run"
     return
   fi
-  local jwt perms
-  jwt="$(_app_jwt "$AGENT_APP_ID" "$AGENT_APP_PRIVATE_KEY_FILE")"
-  perms="$(curl -fsS -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
-             "https://api.github.com/repos/$1/installation" 2>/dev/null | jq '.permissions // empty')"
-  if [ -z "$perms" ]; then
-    bad "Fixer App does not appear to be installed on $1 (or the JWT was rejected)"
+  local jwt inst slug perms
+  jwt="$(ob_app_jwt "$AGENT_APP_ID" "$AGENT_APP_PRIVATE_KEY_FILE")"
+  slug="$(curl -fsS -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
+            https://api.github.com/app 2>/dev/null | jq -r '.slug // empty')"
+  inst="$(ob_app_installation "$1" "$jwt")"
+  if [ -z "$inst" ]; then
+    bad "Fixer App not installed on $1 (or the JWT was rejected) — fix: https://github.com/apps/${slug:-<your-app-slug>}/installations/new"
     return
   fi
-  local issues
-  issues="$(printf '%s' "$perms" | jq -r '.issues // "none"')"
-  [ "$issues" = "write" ] \
-    && ok "App permission issues: write (covers issue dependencies — edge upserts OK)" \
-    || bad "App permission issues: $issues (need write — labels AND edge upserts will fail)"
+  perms="$(printf '%s' "$inst" | jq -r '.permissions.issues // "none"')"
+  [ "$perms" = "write" ] \
+    && ok "App installed, permission issues: write (covers issue dependencies — edge upserts OK)" \
+    || bad "App permission issues: $perms, need write — fix: https://github.com/settings/apps/${slug:-<your-app-slug>}/permissions"
 }
 
 check_stub() { # repo default-branch
-  local content; content="$(_fetch "$1" ".github/workflows/agent-loop.yml" "$2")"
-  [ -n "$content" ] || { bad "stub .github/workflows/agent-loop.yml missing"; return; }
+  local content resync="setup/setup-repo.sh $1 (re-lands the current stub)"
+  content="$(_fetch "$1" ".github/workflows/agent-loop.yml" "$2")"
+  [ -n "$content" ] || { bad "stub .github/workflows/agent-loop.yml missing — fix: $resync"; return; }
   # Version drift: the uses: line must pin the expected channel.
   local ref
   ref="$(printf '%s' "$content" | sed -n 's#.*/agent-loop\.yml@\([A-Za-z0-9._-]\{1,\}\).*#\1#p' | head -1)"
-  if [ -z "$ref" ]; then bad "stub has no bcanfield/smallhours agent-loop.yml@REF reference"
+  if [ -z "$ref" ]; then bad "stub has no bcanfield/smallhours agent-loop.yml@REF reference — fix: $resync"
   elif [ "$ref" = "$EXPECT_REF" ]; then ok "stub pins @$ref"
-  else bad "stub pins @$ref, expected @$EXPECT_REF (version drift)"; fi
+  else bad "stub pins @$ref, expected @$EXPECT_REF (version drift) — fix: $resync"; fi
   # Every trigger surface must be present or a route silently never fires.
   # (`pull_request:` never substring-matches `pull_request_review:` — the colon
   # placement differs.)
@@ -135,16 +145,18 @@ check_stub() { # repo default-branch
            "schedule:" "workflow_dispatch:"; do
     printf '%s' "$content" | grep -q "$t" || missing+=("$t")
   done
-  [ "${#missing[@]}" -eq 0 ] && ok "stub declares all trigger surfaces" || bad "stub missing triggers: ${missing[*]}"
+  [ "${#missing[@]}" -eq 0 ] && ok "stub declares all trigger surfaces" \
+    || bad "stub missing triggers: ${missing[*]} — fix: $resync"
   # M7's re-eval route needs review dismissals forwarded.
   printf '%s' "$content" | grep -q "dismissed" \
     && ok "stub forwards review dismissals (T2 re-eval route)" \
-    || bad "stub pull_request_review types lack 'dismissed' (re-eval route never fires — re-run setup)"
+    || bad "stub pull_request_review types lack 'dismissed' (re-eval route never fires) — fix: $resync"
 }
 
 check_config() { # repo default-branch
   local content; content="$(_fetch "$1" ".smallhours.yml" "$2")"
-  [ -n "$content" ] && ok ".smallhours.yml present" || bad ".smallhours.yml missing"
+  [ -n "$content" ] && ok ".smallhours.yml present" \
+    || bad ".smallhours.yml missing — fix: setup/setup-repo.sh $1 (lands the default config)"
 }
 
 # Ruleset-aware: modern repos protect via rulesets, which the legacy
@@ -168,7 +180,7 @@ check_protection() { # repo default-branch
       [ "$approvals" -ge 1 ] && ok "PR required, $approvals approval(s) (legacy)" \
         || ok "PR required (legacy) — note: 0 approvals required; design suggests ≥1"
     else
-      bad "$2 is not protected (no PR requirement via ruleset or legacy protection)"
+      bad "$2 is not protected (no PR requirement via ruleset or legacy protection) — fix: setup/setup-repo.sh $1 (sets protection)"
     fi
   fi
 
@@ -180,24 +192,26 @@ check_protection() { # repo default-branch
   else
     strict="$(gh api "repos/$1/branches/$2/protection" --jq '.required_status_checks.strict // false' 2>/dev/null || echo false)"
     [ "$strict" = "true" ] && ok "required status checks + up-to-date (legacy)" \
-      || bad "no required status checks / up-to-date policy"
+      || bad "no required status checks / up-to-date policy — fix: setup/setup-repo.sh $1 --required-checks <check-name>"
   fi
 }
 
 check_secret_scanning() { # repo
   local st; st="$(gh api "repos/$1" --jq '.security_and_analysis.secret_scanning_push_protection.status' 2>/dev/null || echo unknown)"
-  [ "$st" = "enabled" ] && ok "secret-scanning push protection enabled" || bad "secret-scanning push protection not enabled ($st)"
+  [ "$st" = "enabled" ] && ok "secret-scanning push protection enabled" \
+    || bad "secret-scanning push protection not enabled ($st) — fix: setup/setup-repo.sh $1 (re-enables it; org policy may block)"
 }
 
 check_auto_delete() { # repo
   local v; v="$(gh repo view "$1" --json deleteBranchOnMerge --jq .deleteBranchOnMerge 2>/dev/null)"
   [ "$v" = "true" ] && ok "auto-delete head branch on merge enabled (T8 cleanup)" \
-    || bad "auto-delete head branch on merge not enabled — merged agent branches will linger"
+    || bad "auto-delete head branch on merge not enabled (merged agent branches will linger) — fix: gh repo edit $1 --delete-branch-on-merge"
 }
 
 check_ci() { # repo
   gh api "repos/$1/actions/workflows" --jq '.workflows[] | select(.state=="active") | .name' 2>/dev/null | grep -qiE '^ci$' \
-    && ok "a CI workflow exists (the loop keys off it)" || bad "no active CI workflow found"
+    && ok "a CI workflow exists (the loop keys off it)" \
+    || bad "no active CI workflow named 'ci' — fix: add one (docs/GETTING-STARTED.md#prerequisites) or set ci_workflow in .smallhours.yml to your workflow's name"
 }
 
 usage() { echo "usage: doctor.sh <owner/repo> [--expect-ref v1]" >&2; }
@@ -214,7 +228,7 @@ main() {
   done
   [ -n "$repo" ] || { usage; exit 64; }
   sh_require_auth
-  gh repo view "$repo" >/dev/null 2>&1 || sh_die "cannot access $repo"
+  gh repo view "$repo" >/dev/null 2>&1 || sh_die "cannot access $repo (check the name and your gh auth)"
   local def; def="$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)"
 
   printf 'smallhours doctor — %s (@%s expected, default branch %s)\n' "$repo" "$EXPECT_REF" "$def"
@@ -224,7 +238,7 @@ main() {
   check_stub "$repo" "$def"
   check_config "$repo" "$def"
   check_triage_doc "$repo" "$def"
-  check_app_permissions "$repo"
+  check_app_install "$repo"
   check_secret_scanning "$repo"
   check_auto_delete "$repo"
   check_protection "$repo" "$def"

@@ -35,6 +35,7 @@ label invariant.
 | `edges.sh`  | Blocking-edge logic (ADR 0006): `## Blocked by` parsing, native-relation upserts, promotable/plan-change/cycle computation (pure functions, tested in `tests/`) |
 | `tracker-context.sh` | Deterministic implement enrichment: parent spec inlined verbatim + cleared-blocker pointers |
 | `claude-run.sh` | Render managed settings from config, provision the sandbox, run a stage under `--permission-mode acceptEdits`, capture JSON. CLI failure = give-up (no retry) |
+| `onboarding.sh` | Setup-tools helpers (M8): App-manifest payload + callback parsing, App JWT/installation lookup, install run-evidence, ending checklist. Sourced only by `setup/*`, which run on the maintainer's machine and may additionally use `curl`/`openssl`/`nc` — the gh+jq+yq contract above binds the stage scripts, not the setup tools |
 
 ## Stage scripts
 

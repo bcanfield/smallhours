@@ -52,9 +52,17 @@ Agents can build, iterate, and revise, but approval always belongs to you.
 
 ## Start
 
+Fifteen minutes: an App, a token, one command, one canary.
+
 ```sh
-setup/setup-repo.sh <owner/repo>
+setup/create-app.sh <owner/repo>    # your Fixer App + its two secrets, one click to install
+claude setup-token                  # → gh secret set CLAUDE_CODE_OAUTH_TOKEN
+setup/setup-repo.sh <owner/repo>    # labels, stub, config, protection — ends with a checklist
 ```
 
-See [Getting started](docs/GETTING-STARTED.md) for setup, trust boundaries,
-and how autonomous execution is kept contained.
+Then label one trivial canary issue `ready-for-agent` and watch it travel
+the whole loop.
+
+See [Getting started](docs/GETTING-STARTED.md) for the step-by-step
+walkthrough, trust boundaries, and how autonomous execution is kept
+contained.

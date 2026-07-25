@@ -322,6 +322,23 @@ Acceptance: a fresh external developer goes clone → App → secrets → setup 
 canary-merged using only GETTING-STARTED; every failure they can hit on the
 way prints its own remedy; `doctor` flags a missing App install.
 
+> **IMPLEMENTED 2026-07-25.** `setup/create-app.sh` registers the Fixer via
+> the App manifest flow (auto-submitting local form → GitHub confirm page →
+> localhost `nc` listener catches the redirect → one-time code exchanged for
+> App ID + PEM), sets both App secrets, keeps the key under `~/.smallhours/`
+> (doctor's authoritative check reads it), and deep-links the one remaining
+> human click (`…/installations/new`), verifying as the App afterwards.
+> Webhook-off is structural — the manifest carries no `hook_attributes`
+> (pinned by tests). GETTING-STARTED became the numbered six-step walkthrough
+> (manual App registration kept as fallback with the webhook tripwire called
+> out; secrets provenance table; canary section with per-transition
+> diagnostics); README Start matches. Every ✗/⚠ in setup-repo/doctor carries
+> its one-line remedy; doctor's App check falls back secret-free to run
+> evidence (a past successful `agent-loop` run proves token minting) —
+> retires debt `fixer-app-install-manual`. Setup ends with the met/unmet
+> checklist (`lib/onboarding.sh`, `tests/test-onboarding.sh`) and mirrors it
+> into the onboarding PR body. Not yet validated on a fresh consumer.
+
 ## Future (out of scope until scheduled)
 
 GitLab port (CI/CD component + webhook→pipeline-trigger bridge + schedules) ·

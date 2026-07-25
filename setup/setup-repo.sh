@@ -25,13 +25,15 @@ set -euo pipefail
 _dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _root="$(cd "$_dir/.." && pwd)"
 . "$_root/scripts/lib/common.sh"
-. "$_root/scripts/lib/config.sh"   # label vocabulary
+. "$_root/scripts/lib/config.sh"      # label vocabulary
+. "$_root/scripts/lib/onboarding.sh"  # ending checklist + App install evidence
 
 DRY_RUN=0
 CI_WORKFLOW=""
 REQUIRED_CHECKS=""
 SKIP_PROTECTION=0
 ONBOARD_BRANCH="smallhours-onboarding"
+ONBOARD_PR=""   # open onboarding PR number, when landing had to go via PR
 
 # ── label vocabulary: name<TAB>color<TAB>description ───────────────────────────
 _labels() {
@@ -82,24 +84,36 @@ verify_secrets() { # repo
     printf '%s\n' "$present" | grep -Fxq "$s" || missing+=("$s")
   done
   if [ "${#missing[@]}" -gt 0 ]; then
-    sh_log "⚠ missing secrets: ${missing[*]} — set them before the loop can run"
+    local remedy="missing ${missing[*]} — fix: setup/create-app.sh $repo (App secrets) / claude setup-token → gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo $repo"
+    sh_log "⚠ secrets: $remedy"
+    ob_check fail "secrets" "$remedy"
   else
     sh_log "✓ all three Fixer secrets present"
+    ob_check ok "secrets" "AGENT_APP_ID, AGENT_APP_PRIVATE_KEY, CLAUDE_CODE_OAUTH_TOKEN present"
   fi
-  sh_log "  reminder: ensure the Fixer GitHub App is INSTALLED on $repo (UI: App → Install)"
+  # Install is the one step only a UI click can do; run evidence is the best a
+  # user token gets (doctor.sh with the key file is the authoritative check).
+  if [ "$(ob_app_install_evidence "$repo")" = "proven" ]; then
+    ob_check ok "Fixer App install" "proven by a past successful agent-loop run"
+  else
+    ob_check warn "Fixer App install" "unproven (no successful agent-loop run yet) — install: setup/create-app.sh $repo, or the App page → Install App"
+  fi
   sh_log "  reminder: the App needs issues WRITE — that permission also covers the native issue-dependency upserts (ADR 0006; no separate dependencies permission exists)"
 }
 
 detect_ci_workflow() { # repo
   local repo="$1"
-  if [ -n "$CI_WORKFLOW" ]; then sh_log "CI workflow (given): $CI_WORKFLOW"; return; fi
-  local hit
-  hit="$(gh api "repos/$repo/actions/workflows" \
-          --jq '.workflows[] | select(.state=="active") | .name' \
-        | grep -iE '^ci$' | head -1 || true)"
-  [ -n "$hit" ] || sh_die "could not auto-detect a CI workflow named 'ci'. Pass --ci-workflow \"<name>\" (the workflow's display name, exactly)."
-  CI_WORKFLOW="$hit"
-  sh_log "CI workflow (detected): $CI_WORKFLOW"
+  if [ -n "$CI_WORKFLOW" ]; then sh_log "CI workflow (given): $CI_WORKFLOW"
+  else
+    local hit
+    hit="$(gh api "repos/$repo/actions/workflows" \
+            --jq '.workflows[] | select(.state=="active") | .name' \
+          | grep -iE '^ci$' | head -1 || true)"
+    [ -n "$hit" ] || sh_die "could not auto-detect a CI workflow named 'ci' — fix: re-run with --ci-workflow \"<name>\" (the workflow's display name, exactly), or add CI first (docs/GETTING-STARTED.md#prerequisites)"
+    CI_WORKFLOW="$hit"
+    sh_log "CI workflow (detected): $CI_WORKFLOW"
+  fi
+  ob_check ok "CI gate" "loop keys off workflow '$CI_WORKFLOW'"
 }
 
 create_labels() { # repo
@@ -127,6 +141,7 @@ create_labels() { # repo
     i=$((i + 1))
   done
   sh_log "✓ label vocabulary created/updated"
+  ob_check ok "labels" "state axis + PR markers + category + attempt counters"
 }
 
 # docs/agents/triage-labels.md — the vocabulary reference a triage/grilling
@@ -233,6 +248,7 @@ land_files() { # repo
     _put_file "$repo" ".smallhours.yml"                  "$cfg"    "$DEFAULT_BRANCH"
     _put_file "$repo" "$TRIAGE_DOC_PATH"                 "$triage" "$DEFAULT_BRANCH"
     sh_log "✓ pushed stub + config + triage-labels.md to $DEFAULT_BRANCH"
+    ob_check ok "stub + config" "landed on $DEFAULT_BRANCH"
     return
   fi
 
@@ -251,37 +267,55 @@ land_files() { # repo
   _put_file "$repo" "$TRIAGE_DOC_PATH"                 "$triage" "$ONBOARD_BRANCH"
 
   if [ -n "$existing" ]; then
+    ONBOARD_PR="$existing"
     sh_log "✓ onboarding PR #$existing updated ($ONBOARD_BRANCH)"
   else
     gh pr create --repo "$repo" --base "$DEFAULT_BRANCH" --head "$ONBOARD_BRANCH" \
       --title "smallhours onboarding" \
       --body "Adds the smallhours consumer stub (\`.github/workflows/agent-loop.yml\`) + \`.smallhours.yml\`, wired to the \`${CI_WORKFLOW}\` workflow. Merge to activate the loop." >/dev/null
+    ONBOARD_PR="$(gh pr list --repo "$repo" --head "$ONBOARD_BRANCH" --state open --json number --jq '.[0].number' 2>/dev/null || true)"
     sh_log "✓ opened onboarding PR ($ONBOARD_BRANCH → $DEFAULT_BRANCH) — REVIEW AND MERGE to activate the loop"
   fi
+  ob_check warn "stub + config" "landed via PR #${ONBOARD_PR:-?} — merge it to activate the loop"
 }
 
 enable_secret_scanning() { # repo
   if [ "$DRY_RUN" -eq 1 ]; then sh_log "DRY-RUN: enable secret-scanning push protection"; return; fi
-  gh api --method PATCH "repos/$1" --input - >/dev/null <<'JSON' || sh_log "⚠ could not enable secret scanning (org policy?)"
+  if gh api --method PATCH "repos/$1" --input - >/dev/null <<'JSON'
 {"security_and_analysis":{"secret_scanning":{"status":"enabled"},"secret_scanning_push_protection":{"status":"enabled"}}}
 JSON
-  sh_log "✓ secret-scanning push protection enabled"
+  then
+    sh_log "✓ secret-scanning push protection enabled"
+    ob_check ok "secret-scanning push protection" "enabled"
+  else
+    sh_log "⚠ could not enable secret scanning — fix: repo Settings → Advanced Security (an org policy may own this toggle)"
+    ob_check warn "secret-scanning push protection" "could not enable — fix: repo Settings → Advanced Security (org policy may own the toggle)"
+  fi
 }
 
 # Auto-delete the head branch on merge — this is what deletes agent/issue-N when
 # a PR merges (T8). Without it, merged agent branches linger.
 enable_auto_delete_branch() { # repo
   if [ "$DRY_RUN" -eq 1 ]; then sh_log "DRY-RUN: enable delete-branch-on-merge"; return; fi
-  gh api --method PATCH "repos/$1" -F delete_branch_on_merge=true >/dev/null 2>&1 \
-    && sh_log "✓ auto-delete head branch on merge enabled (T8 branch cleanup)" \
-    || sh_log "⚠ could not enable delete-branch-on-merge"
+  if gh api --method PATCH "repos/$1" -F delete_branch_on_merge=true >/dev/null 2>&1; then
+    sh_log "✓ auto-delete head branch on merge enabled (T8 branch cleanup)"
+    ob_check ok "auto-delete merged branches" "enabled (T8 cleanup)"
+  else
+    sh_log "⚠ could not enable delete-branch-on-merge — fix: gh repo edit $1 --delete-branch-on-merge"
+    ob_check warn "auto-delete merged branches" "could not enable — fix: gh repo edit $1 --delete-branch-on-merge"
+  fi
 }
 
 set_branch_protection() { # repo
   local repo="$1"
-  if [ "$SKIP_PROTECTION" -eq 1 ]; then sh_log "skipping branch protection (--skip-protection)"; return; fi
+  if [ "$SKIP_PROTECTION" -eq 1 ]; then
+    sh_log "skipping branch protection (--skip-protection)"
+    ob_check warn "branch protection" "skipped by flag — the human-approval gate is OFF; re-run without --skip-protection"
+    return
+  fi
   if default_branch_protected "$repo"; then
     sh_log "✓ $DEFAULT_BRANCH already requires PRs (ruleset/legacy) — leaving existing protection as-is"
+    ob_check ok "branch protection" "$DEFAULT_BRANCH already requires PRs (existing rules kept)"
     return
   fi
   # Required check contexts. Auto-detection is best-effort: check-run names are
@@ -305,6 +339,29 @@ set_branch_protection() { # repo
     restrictions: null
   }' | gh api --method PUT "repos/$repo/branches/$DEFAULT_BRANCH/protection" --input - >/dev/null
   sh_log "✓ branch protection: PR required, 1 approval, up-to-date, checks=$ctx"
+  ob_check ok "branch protection" "PR required, 1 approval, up-to-date, checks=$ctx"
+}
+
+# The ending checklist (M8): setup always closes with met/unmet + remedies,
+# and the onboarding PR (when landing went via PR) mirrors it — the reviewer
+# merging that PR sees the same list the terminal showed.
+print_checklist() { # repo
+  echo >&2
+  printf 'smallhours onboarding checklist — %s\n' "$1" >&2
+  ob_checklist_render >&2
+  if [ "$(ob_checklist_unmet)" -gt 0 ]; then
+    printf '%s unmet — run the fixes above, then verify with setup/doctor.sh %s\n' "$(ob_checklist_unmet)" "$1" >&2
+  fi
+}
+
+mirror_checklist_to_pr() { # repo
+  [ -n "$ONBOARD_PR" ] || return 0
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  local body
+  body="$(printf 'Adds the smallhours consumer stub (`.github/workflows/agent-loop.yml`) + `.smallhours.yml`, wired to the `%s` workflow. Merge to activate the loop.\n\n## Onboarding checklist\n\n%s\n\nUnchecked items have their remedy inline; `setup/doctor.sh %s` re-verifies everything.' \
+            "$CI_WORKFLOW" "$(ob_checklist_markdown)" "$1")"
+  gh pr edit "$ONBOARD_PR" --repo "$1" --body "$body" >/dev/null \
+    || sh_log "⚠ could not mirror the checklist onto PR #$ONBOARD_PR — fix: re-run setup-repo.sh $1 (idempotent), or paste the checklist below into the PR by hand"
 }
 
 usage() { echo "usage: setup-repo.sh <owner/repo> [--ci-workflow NAME] [--required-checks a,b] [--skip-protection] [--dry-run]" >&2; }
@@ -326,6 +383,10 @@ main() {
 
   preflight "$repo"
   load_consumer_config "$repo"
+  ob_checklist_reset
+  # Setup ALWAYS ends with the checklist (M8): a mid-run die still prints
+  # whatever was established up to that point, remedies included.
+  trap 'print_checklist "'"$repo"'"' EXIT
   verify_secrets "$repo"
   detect_ci_workflow "$repo"
   create_labels "$repo"
@@ -333,9 +394,10 @@ main() {
   enable_secret_scanning "$repo"
   enable_auto_delete_branch "$repo"
   set_branch_protection "$repo"
+  mirror_checklist_to_pr "$repo"
 
   sh_log "onboarding complete for $repo"
-  sh_log "next: merge the onboarding PR (if any), then label a grilled issue 'ready-for-agent' to trigger the loop"
+  sh_log "next: merge the onboarding PR (if any), then run the canary — docs/GETTING-STARTED.md#6-first-run-the-canary"
 }
 
 main "$@"
