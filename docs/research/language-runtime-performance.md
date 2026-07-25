@@ -191,3 +191,68 @@ buys ~2× on state-transition latency and ~0 % on agent routes, because runner
 boot and `claude -p` own the clock. If raw performance ever becomes the actual
 goal, §6 (webhook receiver for the state machine) is worth 100× more than any
 language choice — and it would want the same Rust binary.
+
+## 9. Quantified savings (the §8 rewrite, numbers end to end)
+
+Assumptions: hosted-runner boot median ~15 s [typical]; stub cron `*/15`
+(96 dispatcher ticks/day per consumer repo); GitHub-side RTT 150–300 ms
+[typical]; per-job step costs from §1; script-tax numbers from §2/§4.
+
+**Per-job body** (everything after the runner is up, `claude -p` excluded):
+
+| Route | today | Rust binary | saved |
+|---|---|---|---|
+| `dispatch` tick, empty queue (the common case, ×96/day) | ~6 s | ~1 s | ~5 s |
+| `dispatch`, 5 queued | ~11 s | ~1.5 s | ~9 s |
+| `dispatch`, 50 queued | ~25–40 s | ~2 s | ~23–38 s |
+| `authorize` | ~7 s | ~1 s | ~6 s |
+| `ci_state` (+ state-manager transition) | ~8.5 s | ~1.2 s | ~7 s |
+| `cancel` | ~8 s | ~1.2 s | ~7 s |
+| `implement_guard` | ~1.5 s | ~0.5 s | ~1 s |
+| agent-route prelude (implement / address-review / auto-fix) | ~6 s removable | ~1.5 s | ~4.5 s |
+
+The removals per job: yq release download (~1.5 s), toolkit checkout on
+script-only routes (~2 s), `create-github-app-token` action (~1.5 s, minted
+in-process instead), config fetch folded into the first GraphQL call
+(~0.3 s), and the serial-RTT script body collapsed per §4.
+
+**Event-to-action latency** (runner boots included — they don't move):
+
+| Chain | today | after | delta |
+|---|---|---|---|
+| label `ready-for-agent` → agent starts implementing (authorize → dispatch → guard → implement, 4 boots) | ~85–110 s | ~60–70 s | **−25–45 s (~30–40 %)** |
+| CI red → auto-fix begins (ci_state → auto_fix, 2 boots) | ~45 s | ~33 s | −12 s (~25 %) |
+| issue → merged PR, full cycle | `claude -p` + CI dominate | −40–60 s total | **~1–5 %** |
+
+**Daily aggregate, per consumer repo** (96 ticks, ~5 issues worked, ~15 CI
+completions): ~12–18 min of runner wall-time saved/day; at the 20-repo target,
+~4–6 machine-hours/day. Caveat for *billing*: public repos are free, and
+private-repo Actions bill per job **rounded up to the minute**, so a 21 s tick
+and a 16 s tick cost the same minute — the money saved is ≈ 0 for public and
+marginal for private (only jobs that cross a minute boundary, e.g. the
+50-issue dispatch at 2 min → 1 min). The savings are latency and capacity,
+not invoice.
+
+**Non-time efficiency gains:**
+
+- **API budget, ~5–10×.** A 5-issue tick today is ~30 REST calls; after, ~3
+  (token + one GraphQL query + writes). Per repo/day: low thousands → low
+  hundreds. Also retires the secondary-rate-limit risk of rapid serial writes
+  — the current failure mode where a throttled tick silently defers promotion
+  to the next cron slot (up to 15 min of added latency).
+- **A whole failure class deleted.** 96+ yq fetches from
+  `github.com/mikefarah/yq/releases` per repo/day is a per-job external
+  dependency; any flake fails the job and costs a full cron interval. The
+  binary has zero per-job downloads beyond itself (and can be committed,
+  making it zero).
+- **Supply-chain surface.** Drops the third-party token-mint action, yq, and
+  jq from the runtime path; one SHA-pinned artifact remains (§7's
+  auditability trade noted).
+- **Retry/backoff for free.** One process can retry an individual API call in
+  milliseconds; today a failed `gh` mid-script generally fails the job.
+
+Bottom line of the quantification: **5–20× on the job bodies, ~30–40 % on
+event-to-action latency, ~1–5 % on issue→merged-PR, ~0 on cost** — and the
+per-§6 webhook receiver remains the only move that changes the first number
+that users actually feel (the 15–60 s boot in front of every 2-second
+decision).
