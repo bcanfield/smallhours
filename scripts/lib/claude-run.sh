@@ -154,11 +154,20 @@ claude_run() {
     < "$prompt_file" > "$out" 2> "$out.stderr" || rc=$?
 
   if [ "$rc" -ne 0 ]; then
-    sh_log "claude_run: CLI exited $rc — give-up (see ${out}.stderr)"
+    # Surface the failure INTO the job log: the runner's temp dir (and the
+    # stderr file with the real reason — quota, crash, denial) dies with the
+    # runner, so a path reference alone loses the root cause forever.
+    sh_log "claude_run: CLI exited $rc — give-up. stderr tail:"
+    tail -n 20 "${out}.stderr" >&2 2>/dev/null || true
+    if [ -s "$out" ]; then
+      sh_log "claude_run: partial result JSON (subtype/is_error): $(jq -rc '{subtype, is_error} // empty' "$out" 2>/dev/null || true)"
+    else
+      sh_log "claude_run: no result JSON was written"
+    fi
     return "$rc"
   fi
   if [ "$(claude_is_error "$out")" = "true" ]; then
-    sh_log "claude_run: result is_error=true — give-up"
+    sh_log "claude_run: result is_error=true — give-up. result subtype: $(claude_result_field "$out" '.subtype')"
     return 1
   fi
   return 0
