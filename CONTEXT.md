@@ -37,6 +37,12 @@ comments never do.
 **`agent` (PR label)** — Ownership marker on pull requests: "automation owns
 this PR and may modify it." Not a state. Distinct from the issue state axis.
 
+**`autofix-attempt-N` (PR label)** — System-managed counter of *consecutive*
+CI auto-fix attempts on an agent PR (T3'). At most one per PR; any green CI
+strips it. A red arriving at `attempt_cap` (default 3) is T4: the PR gets
+`human-needed`, the issue goes `ready-for-human`. Never human-applied, never a
+workflow trigger, and not part of the `labels:` mapping.
+
 **`ready-for-agent`** — The state label that is this system's trigger. Applying
 it means: the issue is grilled, fully described, and the maintainer authorizes
 spending tokens on it.

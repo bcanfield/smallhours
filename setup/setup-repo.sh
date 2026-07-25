@@ -111,6 +111,21 @@ create_labels() { # repo
     gh label create "$rname" --repo "$repo" --color "$color" --description "$desc" 2>/dev/null \
       || gh label edit "$rname" --repo "$repo" --color "$color" --description "$desc" >/dev/null
   done < <(_labels)
+  # Auto-fix attempt counters (T3', M6): system-managed, literal names (not in
+  # the labels: mapping — state.sh also creates them on demand). Pre-created up
+  # to this consumer's attempt_cap so they carry a color and description.
+  local i cap; cap="$(config_attempt_cap)"
+  i=1
+  while [ "$i" -le "$cap" ]; do
+    name="autofix-attempt-$i"
+    desc="PR: consecutive CI auto-fix attempt $i (system-managed)"
+    if [ "$DRY_RUN" -eq 1 ]; then printf 'DRY-RUN: label %s\n' "$name" >&2
+    else
+      gh label create "$name" --repo "$repo" --color f9d0c4 --description "$desc" 2>/dev/null \
+        || gh label edit "$name" --repo "$repo" --color f9d0c4 --description "$desc" >/dev/null
+    fi
+    i=$((i + 1))
+  done
   sh_log "✓ label vocabulary created/updated"
 }
 

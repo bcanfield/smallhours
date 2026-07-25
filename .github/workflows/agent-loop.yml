@@ -18,7 +18,8 @@
 #   issues labeled agent-working            -> implement (guarded: fresh, no open agent PR)
 #   issues closed / unlabeled(agent-working, by a human) -> cancel  (T10 / T11)
 #   pull_request_review changes_requested   -> address-review (T7)
-#   workflow_run completed (consumer CI)    -> state-manager (T2 / T3)
+#   workflow_run completed (consumer CI)    -> state-manager (T2 / T3' / T4)
+#                                              red + attempts left -> auto-fix
 #
 # Self-checkout: jobs that need the toolkit's own files check out
 # ${{ job.workflow_repository }}@${{ job.workflow_sha }} — the EXACT version the
@@ -371,7 +372,10 @@ jobs:
             "${{ github.event.review.state }}" "${{ github.event.review.user.login }}"
           "$T/report-usage.sh" "$pr" "${RUNNER_TEMP}/smallhours-result.json" address_review
 
-  # ── T2 / T3: consumer CI outcome drives PR/issue state ─────────────────────
+  # ── T2 / T3' / T4: consumer CI outcome drives PR/issue state ───────────────
+  # state-manager.sh decides; when it grants an auto-fix attempt it prints
+  # `autofix=<n>` on stdout, which becomes this job's outputs for the auto_fix
+  # job below.
   ci_state:
     if: >-
       github.event_name == 'workflow_run' &&
@@ -384,6 +388,10 @@ jobs:
     concurrency:
       group: smallhours-ci-${{ github.event.workflow_run.head_branch }}
       cancel-in-progress: false
+    outputs:
+      autofix: ${{ steps.sm.outputs.autofix }}
+      attempt: ${{ steps.sm.outputs.attempt }}
+      pr: ${{ steps.sm.outputs.pr }}
     steps:
       - uses: actions/create-github-app-token@v1
         id: token
@@ -407,7 +415,8 @@ jobs:
           sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
           gh api "repos/${{ github.repository }}/contents/.smallhours.yml" \
             --jq '.content' 2>/dev/null | base64 -d > "$RUNNER_TEMP/smallhours-config.yml" || true
-      - env:
+      - id: sm
+        env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
         run: |
@@ -426,4 +435,67 @@ jobs:
             echo "No open PR for ${{ github.event.workflow_run.head_branch }} — nothing to do."
             exit 0
           fi
-          "$T/state-manager.sh" "$pr" "$ci"
+          decision="$("$T/state-manager.sh" "$pr" "$ci")"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          case "$decision" in
+            autofix=*)
+              echo "autofix=true"                >> "$GITHUB_OUTPUT"
+              echo "attempt=${decision#autofix=}" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "autofix=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+  # ── T3' body: fix the red CI on the agent PR; the push re-runs CI ──────────
+  auto_fix:
+    needs: ci_state
+    if: needs.ci_state.outputs.autofix == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    concurrency:
+      group: smallhours-pr-${{ needs.ci_state.outputs.pr }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: token
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.token.outputs.token }}
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .smallhours-toolkit
+      - name: Exclude the toolkit checkout from consumer commits
+        run: echo '/.smallhours-toolkit/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
+      - name: Load pinned versions
+        run: grep -E '^[A-Z_][A-Z0-9_]*=' .smallhours-toolkit/versions.env >> "$GITHUB_ENV"
+      - name: Install yq (pinned)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "$RUNNER_TEMP/yq" \
+            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
+      - name: Provision sandbox (bubblewrap, Claude, managed settings)
+        run: |
+          set -euo pipefail
+          source .smallhours-toolkit/scripts/lib/claude-run.sh
+          claude_run_provision
+      - name: Auto-fix the failing CI, report usage
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          T=.smallhours-toolkit/scripts
+          pr="${{ needs.ci_state.outputs.pr }}"
+          "$T/auto-fix.sh" "$pr" "${{ needs.ci_state.outputs.attempt }}" \
+            "${{ github.event.workflow_run.id }}"
+          "$T/report-usage.sh" "$pr" "${RUNNER_TEMP}/smallhours-result.json" auto_fix
