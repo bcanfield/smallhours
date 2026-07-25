@@ -2,48 +2,87 @@
 
 # smallhours
 
-An autonomous issue → PR system: the maintainer grills issues (externally) and
-reviews PRs; everything between — implementation, draft PR, state management,
-review-feedback revisions, and (Phase 2) CI self-healing — is automated via
-Claude Code running unattended in GitHub Actions.
+Coding agents are good now. Watching one work is still a full-time job.
 
-**Status: Milestones 0–3 complete; Milestone 4 (consumer onboarding) next.**
-Both Phase-1 spikes ran green on 2026-07-17 (sandbox egress + reusable-workflow
-concurrency). The decisive finding: run the agent as `claude -p
---permission-mode acceptEdits`, **not** `--dangerously-skip-permissions` — the
-latter disables the very sandbox meant to contain it (see the ADR 0001
-addendum). The toolkit is now built: `release.yml` (the sole mover of the
-floating `v1` tag — ADR 0003), the full `agent-loop.yml` routing workflow
-(ADR 0002; self-checks-out the toolkit at the exact invoked version), the
-portable `scripts/` + `prompts/` (Phase-1 set), and the consumer `stub/`. Only
-`setup/` remains a placeholder — Milestone 4 fills it with `setup-repo.sh` /
-`doctor.sh`. **End-to-end firing is still gated on the human prerequisites: the
-Fixer GitHub App must be created and its secrets set (see the plan).**
+Prompt, watch, nudge, approve. Repeat. You traded writing the code for
+staring at something else writing the code.
 
-## Reading order
+smallhours is for stepping out of that chair. You manage an issue board;
+agents handle the implementation, unattended, in your repo's CI. Most of the
+time they don't need you at all. When they do, they say so and get out of
+the way.
 
-1. [`docs/DESIGN.md`](docs/DESIGN.md) — the agreed system: scope decisions,
-   both state machines, every transition and edge-case ruling, security
-   posture, phasing.
-2. [`CONTEXT.md`](CONTEXT.md) — the vocabulary. Terms are canonical; use them
-   exactly.
-3. [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md) — milestones
-   0–7 with acceptance criteria. Milestones 0–3 are done; start at Milestone 4.
-4. [`docs/adr/`](docs/adr/) — the hard-to-reverse decisions and why:
-   sandbox-is-the-boundary (0001, **read the spike-0a addendum**),
-   packaging/versioning (0002), release semver-channel policy (0003).
-5. [`spikes/`](spikes/) — the throwaway Milestone-0 experiments and their
-   recorded outcomes; kept as re-runnable regression guards.
-6. [`docs/research/packaging-distribution.md`](docs/research/packaging-distribution.md)
-   — primary-source citations behind ADR 0002.
+## What it does
 
-## The system in one paragraph
+You write the issue properly: goal, acceptance criteria, constraints. You
+apply one label, `ready-for-agent`.
 
-A fully described issue gets the `ready-for-agent` label (the only trigger,
-maintainer-applied). A reusable workflow authorizes the labeler, has Claude
-Code implement on `agent/issue-N`, and deterministically opens a draft PR.
-CI results and formal "Request changes" reviews drive all state transitions;
-the issue board always shows exactly one state label per issue, and the PR
-board only ever shows "draft, automation's problem" or "ready, maintainer's
-move." The human approve+merge is structurally required (branch protection),
-and every automation identity is a dedicated GitHub App.
+Sometime later there's a draft PR waiting. Tests green. Ready for review.
+
+Everything between the label and the review happened without you.
+
+## How it works
+
+The label kicks off a GitHub Actions workflow. Claude Code implements the
+issue inside a network sandbox that can reach GitHub and the Claude API and
+nothing else, working on its own `agent/issue-N` branch, surfacing as a
+draft PR.
+
+From there, the system listens to exactly two signals: CI, and your reviews.
+
+Red CI? It takes a few bounded attempts to fix things, then hands the issue
+back to you instead of looping forever. Submit a "Request changes" review and
+the agent revises. Green and mergeable, and the PR flips to ready.
+
+Your queue. Your call.
+
+You approve and merge. The issue closes, the branch is deleted, and the
+board moves on.
+
+## The boundaries
+
+Autonomy is easy to promise. Boundaries are what make it usable.
+
+The merge button is structurally yours: branch protection requires a human
+approval, and the agent can't grant one. Every automation action is performed
+by a dedicated GitHub App, so history always shows who did what. And if a
+malicious issue ever talks the agent into something, the sandbox leaves it
+very few places to send anything.
+
+One more small thing that matters a lot. Every issue carries exactly one
+state label at all times, so the board never lies. Each item is the
+automation's problem, or it's yours.
+
+## Getting started
+
+```sh
+setup/setup-repo.sh <owner/repo>
+```
+
+One command onboards a repo: stub workflow, labels, branch protection,
+default config. Later,
+
+```sh
+setup/doctor.sh <owner/repo>
+```
+
+checks the whole arrangement and complains precisely when something drifts.
+
+You'll need a dedicated GitHub App and a Claude Code OAuth token as repo
+secrets; setup tells you what's missing. Per-repo behavior lives in
+`.smallhours.yml` (models, concurrency caps, which CI workflow gates the
+loop). The defaults are meant to be good enough that you rarely open it.
+
+## Going deeper
+
+- [`docs/DESIGN.md`](docs/DESIGN.md): the full design. Both state machines,
+  every transition, the edge cases and their rulings.
+- [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md): build status,
+  milestone by milestone.
+- [`docs/adr/`](docs/adr/): the hard-to-reverse decisions, and why they went
+  the way they did.
+
+---
+
+It's called smallhours because that's when it does its best work — while
+you're asleep.
