@@ -280,11 +280,54 @@ Frontier at start: 06-1 (label mapping),
   > (`SMALLHOURS_WATCHDOG_MINUTES` override for testing); implement's 40m
   > timeout can't trip it. Stub gained triggers → consumers re-sync via setup.
 
+## Milestone 8 — Onboarding UX
+
+Target user: an external developer with a Claude subscription and ~15
+minutes who will not read DESIGN.md. Decisions grilled 2026-07-25. In build
+order:
+
+1. **Docs: prerequisites walkthrough.** GETTING-STARTED becomes a numbered
+   path: clone the toolkit; create the Fixer App (manual UI steps incl. the
+   webhook-must-be-unchecked tripwire — kept as fallback text once
+   `create-app.sh` exists); provenance + exact `gh secret set` command for
+   each of the three secrets (incl. `claude setup-token`); the install click
+   with its deep link. README "Start" updated to match.
+2. **Docs: "First run" canary section.** A deliberately trivial issue
+   template plus the transition-by-transition "what you should see" list
+   (stub fires → `agent-working` → draft PR → green → ready + `in-review` →
+   merge → branch gone, issue closed); each step doubles as a diagnostic for
+   where the wiring is broken.
+3. **`setup/create-app.sh`.** GitHub App **manifest flow** (localhost
+   listener, browser pre-filled with name/permissions/webhook-off, `--org`
+   supported); exchanges the callback code for App ID + PEM, sets both
+   secrets via `gh secret set`, then verifies installation and prints the
+   `github.com/apps/<slug>/installations/new` deep link when missing.
+4. **Actionable failures.** Every ✗/⚠ in `setup-repo.sh` and `doctor.sh`
+   carries its one-line remedy (exact command or a GETTING-STARTED anchor —
+   never an inlined paragraph). `doctor.sh` gains a secret-free best-effort
+   App-install check (a past successful `agent-loop` run proves token
+   minting; none + zero runs = "likely not installed" warning). Retires debt
+   `fixer-app-install-manual`.
+5. **Ending checklist.** Setup always ends with a met/unmet checklist
+   (✓/✗ + Q-item remedies); the protected-branch onboarding PR body mirrors
+   it. Landing semantics unchanged (direct push when unprotected, PR when
+   protected).
+
+Out of scope (decided): hosted/one-click App (contradicts the
+maintainer-owned-Fixer posture) · `curl | bash` installer (off-brand for the
+security posture) · zero-spend `--smoke` mode (test mode inside the
+production loop, disproportionate for v1).
+
+Acceptance: a fresh external developer goes clone → App → secrets → setup →
+canary-merged using only GETTING-STARTED; every failure they can hit on the
+way prints its own remedy; `doctor` flags a missing App install.
+
 ## Future (out of scope until scheduled)
 
 GitLab port (CI/CD component + webhook→pipeline-trigger bridge + schedules) ·
 self-hosted runtime · GHCR image built from `versions.env` (ADR 0002) ·
-issue-comment grilling bot · model auto-escalation.
+issue-comment grilling bot · model auto-escalation · gh-extension packaging
+(needs a `gh-smallhours` wrapper repo; only if adoption warrants).
 
 ## Consumer config schema (`.smallhours.yml`, all keys optional)
 

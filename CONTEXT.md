@@ -81,6 +81,14 @@ participates manually.
 **Agent** — Claude Code running unattended (GitHub Actions in v1), implementing
 a `ready-for-agent` issue through to a reviewable PR.
 
+**Fixer App** — The maintainer-owned GitHub App that is the identity every
+automation action runs under. One per maintainer, never hosted centrally, so
+the audit trail always distinguishes machine actions from human ones.
+
+**Canary issue** — A deliberately trivial issue used as the first-run smoke
+test on a freshly onboarded consumer repo: it exercises every canonical
+transition once, so where it stalls identifies what is miswired.
+
 **Toolkit repo** — The single public repo owning all shared automation logic
 (reusable workflows, scripts, tool-version pins, onboarding scripts). The only
 place behavior changes are made.
