@@ -13,4 +13,4 @@ is never interpreted as shell or regex. Templates never fetch context themselves
 | `implement.md`       | build the fully-described issue on `agent/issue-N` | ✅ Milestone 2 |
 | `address-review.md`  | apply a formal "Request changes" review            | ✅ Milestone 2 |
 | `auto-fix.md`        | repair red CI on an `agent`-labelled PR            | ✅ Milestone 6 |
-| `resolve-conflict.md`| resolve a DIRTY branch                             | Phase 2 (M7) |
+| `resolve-conflict.md`| resolve a DIRTY branch                             | ✅ Milestone 7 |

@@ -8,9 +8,6 @@
 # T10/T11: close the open agent draft PR, comment, delete its branch.
 # T9:      the PR's issue -> ready-for-human + comment.
 #
-# NOTE (finding for M3/M4): T9 needs a `pull_request: [closed]` trigger, which
-# the Phase-1 stub does not yet declare. cancel.sh implements the logic; the
-# wiring is a routing task.
 # Env: GH_TOKEN, GITHUB_REPOSITORY.
 set -euo pipefail
 _dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -52,11 +49,15 @@ main() {
       ;;
     pr-closed)      # T9 — PR closed without merging.
       local issue; issue="$(sh_issue_from_pr "$num")"
-      if [ -n "$issue" ]; then
+      if [ -z "$issue" ]; then
+        sh_log "cancel: could not resolve an issue for PR #$num"
+      elif [ "$(gh issue view "$issue" --repo "$(sh_repo)" --json state --jq .state)" != "OPEN" ]; then
+        # A closed issue needs no hand-back (e.g. T10 already closed the PR —
+        # the resulting pull_request:closed event must not re-comment).
+        sh_log "cancel: issue #$issue is closed — no hand-back needed"
+      else
         state_set_issue "$issue" ready-for-human
         sh_comment_issue "$issue" "🚪 The pull request for this issue (#$num) was closed without merging. Handing back to a human."
-      else
-        sh_log "cancel: could not resolve an issue for PR #$num"
       fi
       ;;
     *)
