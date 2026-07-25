@@ -28,6 +28,23 @@ unattended in GitHub Actions.
 - Read the entries under `docs/debt/` before changing files they reference;
   register new deferred decisions there.
 
+## Content rules
+
+Every artifact added here — doc, script, prompt, test — is standing baggage
+someone must read, maintain, and eventually delete. Before creating one:
+
+- Name its reader and its trigger (who reads this, on what occasion). If you
+  can't answer both, don't create it.
+- Prefer the existing home over a new file: vocabulary → `CONTEXT.md`,
+  decisions → `docs/adr/`, deferred work → `docs/debt/`, status → the
+  IMPLEMENTATION-PLAN DONE annotations, onboarding → `GETTING-STARTED.md`.
+- State each fact in exactly one place and link to it elsewhere; if code or
+  git history already records it, write nothing.
+- Research and scratch docs are inputs, not residents: distill the conclusion
+  into an ADR or the plan, then delete the source in the same change.
+- Adding a line to `CLAUDE.md` or `CONTEXT.md` is a trade — look for a line
+  that no longer earns its place.
+
 ## Repo facts
 
 - `spikes/` are re-runnable regression guards from Milestone 0, not dead code.

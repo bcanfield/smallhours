@@ -216,7 +216,18 @@ Frontier at start: 06-1 (label mapping),
   Phase 1's T3 routing): `agent`-labeled PRs only, ≤3 *consecutive* attempts
   (`autofix-attempt-*` labels stripped on any green), then T4 give-up.
 
-  > **IMPLEMENTED 2026-07-24, pending live validation.** state-manager.sh now
+  > **VALIDATED 2026-07-25** live on mediamtx-connect (v0.4.3, issue #248 /
+  > PR #249): deliberate typecheck break → T3' minted `autofix-attempt-1` and
+  > summoned auto-fix, which removed the broken file (15 turns · 56s) → green
+  > stripped the attempt label and re-fired T2. With `autofix-attempt-3`
+  > pre-set, the next red hit T4 exactly once (`human-needed`, issue
+  > `ready-for-human`, one comment, `auto_fix` job **skipped** — no Claude
+  > spend at cap); a further red logged the idempotent no-op. Human rescue
+  > after T4 → green stripped all three markers and re-fired T2 (via a
+  > `gh run rerun` after an unrelated E2E flake — live proof of debt
+  > `autofix-burns-attempt-on-flaky-ci`).
+  >
+  > Implementation (2026-07-24): state-manager.sh now
   > owns the red-path decision (T3' grant printed as `autofix=<n>` on stdout,
   > T4 at `attempt_cap` with idempotent re-red no-op); attempt counting lives
   > in `lib/state.sh` as one `autofix-attempt-N` PR label at a time (system
