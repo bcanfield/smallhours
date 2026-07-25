@@ -189,6 +189,15 @@ Run ~a dozen real issues through before opening Phase 2.
 
 ## Milestone 5.5 — Pocock protocol integration (after M5 sign-off; ADR 0006)
 
+> **VALIDATED 2026-07-25** on mediamtx-connect (shipped v0.4.0–v0.4.2): all
+> three acceptance scenarios passed — chain A←B dispatched serially on merge,
+> NOT_PLANNED blocker ejected its dependent (once, with marker comment),
+> unresolvable ref stayed queued fail-closed with exactly one comment. First
+> full T7 loop also ran and exposed a structural stranding (green revision
+> can't reach in-review while the changes-requested review blocks; approval
+> fires no re-check) — recorded in debt `phase1-green-not-clean-stranding`
+> with the sweep-fix sketch. Tickets smallhours#7–#12 closed.
+
 Make smallhours the AFK implementer for repos using the Pocock flow
 (grill → to-spec → to-tickets → `ready-for-agent`). Design: DESIGN.md
 § Pocock protocol integration; decisions + full spec and six-ticket DAG:
