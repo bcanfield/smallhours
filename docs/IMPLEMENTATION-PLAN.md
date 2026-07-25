@@ -243,7 +243,26 @@ Frontier at start: 06-1 (label mapping),
   no open PR >1h → `ready-for-human`); label-invariant reconciliation.
   `UNKNOWN` merge state → skip.
 
-  > **IMPLEMENTED 2026-07-25** (pending live validation). `sweep.sh` (decider,
+  > **VALIDATED 2026-07-25** live on mediamtx-connect (v0.5.0–v0.5.2): T5
+  > twice (BEHIND → App-authored update merge → green → T2 re-fired); T6 end
+  > to end (DIRTY → draft → agent resolved an add/add conflict preserving both
+  > sides, 7 turns · 33s → push → green → T2; give-up path also exercised —
+  > human-needed + ready-for-human + reason, and the sweep skips human-needed
+  > DIRTY PRs instead of retrying every tick, found+fixed in v0.5.1); watchdog
+  > both via env override and at the real 60m threshold in-workflow (⏰
+  > reclaim to ready-for-human); label reconciliation (double state label →
+  > exactly one + 🧹 comment); T9 twice (human-closed agent PR → 🚪 hand-back;
+  > Bot-closed PRs correctly ignored); and the full stranding replay on a real
+  > loop PR — changes-requested → green revision → BLOCKED (stranded exactly
+  > as the old debt described) → approval fired review_reeval (transient
+  > UNSTABLE correctly held) → the sweep's green-reeval backstop promoted →
+  > merge → T8. Two live root-causes fixed en route: hosted runners have no
+  > git ident so `git merge` dies with "empty ident name" (v0.5.2 passes
+  > identity on the merge; v0.5.1's never-swallow-merge-output diagnostics
+  > found it), and the T6 retry-forever gap above. Doctor clean; board audit
+  > clean.
+  >
+  > **IMPLEMENTED 2026-07-25.** `sweep.sh` (decider,
   > no sandbox) runs on schedule *and* a new stub `workflow_dispatch` (manual
   > tick — the repo's cron is chronically laggy); it emits at most one
   > `conflict=<pr>` per tick for the new `resolve_conflict` job
