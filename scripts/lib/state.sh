@@ -63,6 +63,57 @@ state_set_issue() { # issue-number new-state(canonical)
   sh_log "issue #$issue state -> $canonical ($want)"
 }
 
+# ── Auto-fix attempt counter (T3'/T4) ─────────────────────────────────────────
+# Attempt N of the CI auto-fix loop is the PR label `autofix-attempt-N`.
+# System-internal: never a workflow trigger, never human-applied, and NOT part
+# of the labels: mapping (docs/debt autofix-attempt-labels-unmappable) — so the
+# label is created on demand rather than assumed by setup. At most one attempt
+# label per PR; ANY green CI strips it (DESIGN: the cap counts *consecutive*
+# failures only).
+
+# Pure half, testable offline: read label names on stdin, print the highest
+# attempt number present (0 when none).
+state_autofix_attempt_from_labels() {
+  local n
+  n="$(sed -n 's/^autofix-attempt-\([0-9]\{1,\}\)$/\1/p' | sort -n | tail -n 1)"
+  printf '%s\n' "${n:-0}"
+}
+
+# Current attempt count on a PR.
+state_autofix_attempt() { # pr-number
+  gh pr view "$1" --repo "$(sh_repo)" --json labels --jq '.labels[].name' \
+    | state_autofix_attempt_from_labels
+}
+
+# Move a PR to attempt N: add autofix-attempt-N, strip any other attempt label.
+state_autofix_set_attempt() { # pr-number N
+  local pr="$1" n="$2" repo cur; repo="$(sh_repo)"
+  gh label create "autofix-attempt-$n" --repo "$repo" --color f9d0c4 \
+    --description "PR: consecutive CI auto-fix attempt $n (system-managed)" \
+    2>/dev/null || true
+  gh pr edit "$pr" --repo "$repo" --add-label "autofix-attempt-$n" >/dev/null
+  while IFS= read -r cur; do
+    case "$cur" in
+      "autofix-attempt-$n") : ;;
+      autofix-attempt-*)
+        gh pr edit "$pr" --repo "$repo" --remove-label "$cur" >/dev/null 2>&1 || true ;;
+    esac
+  done < <(gh pr view "$pr" --repo "$repo" --json labels --jq '.labels[].name')
+  sh_log "PR #$pr auto-fix attempt -> $n"
+}
+
+# Strip every attempt label (any green CI resets the consecutive counter).
+state_autofix_clear() { # pr-number
+  local pr="$1" repo cur; repo="$(sh_repo)"
+  while IFS= read -r cur; do
+    case "$cur" in
+      autofix-attempt-*)
+        gh pr edit "$pr" --repo "$repo" --remove-label "$cur" >/dev/null 2>&1 || true
+        sh_log "PR #$pr attempt label '$cur' stripped (green resets the counter)" ;;
+    esac
+  done < <(gh pr view "$pr" --repo "$repo" --json labels --jq '.labels[].name')
+}
+
 # ── PR marker labels (not the state axis) ─────────────────────────────────────
 # Args are CANONICAL names, resolved here (same choke-point rule as above).
 state_pr_add_label() { # pr-number label...

@@ -215,6 +215,18 @@ Frontier at start: 06-1 (label mapping),
 - **M6 auto-fix:** `auto-fix.sh` on the `workflow_run` red path (replaces
   Phase 1's T3 routing): `agent`-labeled PRs only, ≤3 *consecutive* attempts
   (`autofix-attempt-*` labels stripped on any green), then T4 give-up.
+
+  > **IMPLEMENTED 2026-07-24, pending live validation.** state-manager.sh now
+  > owns the red-path decision (T3' grant printed as `autofix=<n>` on stdout,
+  > T4 at `attempt_cap` with idempotent re-red no-op); attempt counting lives
+  > in `lib/state.sh` as one `autofix-attempt-N` PR label at a time (system
+  > literal, not in the `labels:` mapping — created on demand, pre-created
+  > with colors by setup). New `auto_fix` workflow job (sandbox, PR-head
+  > checkout, failing-check names + failed-job log tail as context); a no-diff
+  > agent run is a give-up, not a silent strand. `attempt_cap: 0` disables
+  > auto-fix. Offline tests in `tests/test-autofix.sh`. Validate on
+  > mediamtx-connect: red CI → attempt labels advance → green strips them, and
+  > a forced triple-red reaches T4 exactly once.
 - **M7 sweep:** schedule route goes live: BEHIND→`update-branch`;
   DIRTY→conflict-resolution stage (one per run); watchdog (`agent-working` +
   no open PR >1h → `ready-for-human`); label-invariant reconciliation.

@@ -57,6 +57,18 @@ check_labels() { # repo
   done
   [ "${#miss[@]}" -eq 0 ] && ok "all ${#want[@]} labels present (mapping-resolved)" \
     || bad "missing labels (mapping drift): ${miss[*]}"
+  # Attempt counters (T3', M6) are created on demand by state.sh, so absence is
+  # cosmetic (they'd appear uncolored) — a note, not a failure.
+  local i cap missing_attempts=()
+  cap="$(config_attempt_cap)"
+  i=1
+  while [ "$i" -le "$cap" ]; do
+    printf '%s\n' "$have" | grep -Fxq "autofix-attempt-$i" || missing_attempts+=("autofix-attempt-$i")
+    i=$((i + 1))
+  done
+  [ "${#missing_attempts[@]}" -eq 0 ] \
+    && ok "autofix-attempt-1..$cap labels present" \
+    || note "autofix-attempt labels not pre-created (${missing_attempts[*]}) — created on demand; re-run setup for colors"
 }
 
 # The triage vocabulary doc in the knowledge layer (Pocock flow, 06-6). Its

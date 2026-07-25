@@ -43,12 +43,13 @@ label invariant.
 | `authorize.sh`      | T1 gate (fail-closed on non-write labeller) | `authorize.sh <issue> <actor>` |
 | `implement.sh`      | T1 body: branch + implement prompt          | `implement.sh <issue> [attempt]` |
 | `open-pr.sh`        | T1 tail: deterministic draft PR / no-commits→human | `open-pr.sh <issue> [branch] [attempt]` |
-| `state-manager.sh`  | T2 / T3 from CI outcome                      | `state-manager.sh <pr> <success\|failure>` |
+| `state-manager.sh`  | T2 / T3' / T4 from CI outcome (prints `autofix=<n>` on stdout when the caller should run auto-fix) | `state-manager.sh <pr> <success\|failure>` |
+| `auto-fix.sh`       | T3' body: fix red CI on the agent PR (attempt n of `attempt_cap`) | `auto-fix.sh <pr> <attempt> [ci-run-id]` |
 | `address-review.sh` | T7: changes-requested re-summon             | `address-review.sh <pr> <review-state> <reviewer>` |
 | `cancel.sh`         | T9 / T10 / T11                              | `cancel.sh <issue-closed\|label-removed\|pr-closed> <number>` |
 | `report-usage.sh`   | Per-run PR usage comment                     | `report-usage.sh <pr> <result-json> <stage>` |
 
-Phase 2 adds `auto-fix.sh` (M6) and the sweep (M7). The Milestone 3 workflow is
+Phase 2's remaining piece is the sweep (M7). The Milestone 3 workflow is
 what maps GitHub events to these entry points; Milestone 5 exercises them
 end-to-end against a real repo.
 
