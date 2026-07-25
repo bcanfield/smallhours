@@ -37,7 +37,7 @@ main() {
       # invariant; a bare label removal would leave the issue state-less).
       state_set_issue "$issue" needs-triage
       sh_comment_issue "$issue" \
-        "🔒 \`ready-for-agent\` was applied by @${actor}, who does not have write access to this repository, so smallhours did not act. Moved back to \`needs-triage\`. A maintainer can re-apply the label."
+        "🔒 \`ready-for-agent\` was applied by @${actor}, who does not have write access to this repository, so smallhours did not act. Moved back to \`$(label_for needs-triage)\`. A maintainer can re-apply the label."
       exit 3
       ;;
   esac

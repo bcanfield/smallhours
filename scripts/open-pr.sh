@@ -60,7 +60,7 @@ main() {
       --body "Closes #${issue}
 
 _Opened by smallhours. This PR is automation-owned (\`agent\`) and stays a draft until CI is green._" \
-      --label agent \
+      --label "$(label_for agent)" \
       | grep -oE '[0-9]+$' | tail -1)"
     sh_log "open-pr: created draft PR #$pr for $branch"
   fi

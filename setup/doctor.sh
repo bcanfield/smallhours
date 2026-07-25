@@ -17,9 +17,28 @@ EXPECT_REF="v1"
 FAILED=0
 ok()   { printf '  ✓ %s\n' "$*"; }
 bad()  { printf '  ✗ %s\n' "$*"; FAILED=1; }
+note() { printf '  … %s\n' "$*"; }
 
 # Fetch a file's decoded contents from the consumer (empty if absent).
 _fetch() { gh api "repos/$1/contents/$2?ref=$3" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true; }
+
+# Point label resolution at the CONSUMER's config so mapped labels are checked
+# under their repo strings (06-1/06-6). An invalid mapping is itself drift.
+load_consumer_config() { # repo default-branch
+  local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/smallhours-doctor-cfg.XXXXXX")"
+  _fetch "$1" ".smallhours.yml" "$2" > "$tmp"
+  if [ -s "$tmp" ]; then
+    export SMALLHOURS_CONFIG="$tmp"
+    if config_load; then
+      ok ".smallhours.yml parses (labels mapping valid)"
+    else
+      bad ".smallhours.yml invalid (labels mapping?) — checking canonical labels instead"
+      export SMALLHOURS_CONFIG="$tmp.absent"
+    fi
+  else
+    export SMALLHOURS_CONFIG="$tmp.absent"   # config check reports the absence
+  fi
+}
 
 check_secrets() { # repo
   local present s; present="$(gh secret list --repo "$1" --json name --jq '.[].name' 2>/dev/null || gh secret list --repo "$1" | awk '{print $1}')"
@@ -29,11 +48,66 @@ check_secrets() { # repo
 }
 
 check_labels() { # repo
-  local have name; have="$(gh label list --repo "$1" --limit 200 --json name --jq '.[].name' 2>/dev/null || true)"
+  local have name rname; have="$(gh label list --repo "$1" --limit 200 --json name --jq '.[].name' 2>/dev/null || true)"
   local want=("${SMALLHOURS_STATE_LABELS[@]}" "${SMALLHOURS_PR_LABELS[@]}" "${SMALLHOURS_CATEGORY_LABELS[@]}")
   local miss=()
-  for name in "${want[@]}"; do printf '%s\n' "$have" | grep -Fxq "$name" || miss+=("$name"); done
-  [ "${#miss[@]}" -eq 0 ] && ok "all ${#want[@]} labels present" || bad "missing labels: ${miss[*]}"
+  for name in "${want[@]}"; do
+    rname="$(label_for "$name")"
+    printf '%s\n' "$have" | grep -Fxq "$rname" || miss+=("$rname")
+  done
+  [ "${#miss[@]}" -eq 0 ] && ok "all ${#want[@]} labels present (mapping-resolved)" \
+    || bad "missing labels (mapping drift): ${miss[*]}"
+}
+
+# The triage vocabulary doc in the knowledge layer (Pocock flow, 06-6). Its
+# system-owned note is the contract; a hand-deleted or pre-setup repo fails.
+check_triage_doc() { # repo default-branch
+  local content; content="$(_fetch "$1" "docs/agents/triage-labels.md" "$2")"
+  if [ -z "$content" ]; then bad "docs/agents/triage-labels.md missing (setup imports it)"; return; fi
+  printf '%s' "$content" | grep -q '## System-owned states' \
+    && ok "triage-labels.md present with system-owned-states note" \
+    || bad "triage-labels.md lacks the system-owned-states note (drift — re-run setup)"
+}
+
+# ── Fixer App permissions (ADR 0006: edge upserts need issue-dependencies) ───
+# App permissions are only readable AS the App. With AGENT_APP_ID +
+# AGENT_APP_PRIVATE_KEY_FILE set we mint a JWT and check for real; otherwise
+# this is a note, not a pass — a missing permission still fails LOUDLY at
+# dispatch time (upsert comments and fails closed), so nothing is silent.
+_app_jwt() { # app-id key-file
+  local now hdr pld sig
+  now="$(date +%s)"
+  _b64url() { openssl base64 -A | tr -d '=' | tr '/+' '_-'; }
+  hdr="$(printf '{"alg":"RS256","typ":"JWT"}' | _b64url)"
+  pld="$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' "$((now-60))" "$((now+540))" "$1" | _b64url)"
+  sig="$(printf '%s.%s' "$hdr" "$pld" | openssl dgst -sha256 -sign "$2" -binary | _b64url)"
+  printf '%s.%s.%s' "$hdr" "$pld" "$sig"
+}
+
+check_app_permissions() { # repo
+  if [ -z "${AGENT_APP_ID:-}" ] || [ -z "${AGENT_APP_PRIVATE_KEY_FILE:-}" ] || [ ! -f "${AGENT_APP_PRIVATE_KEY_FILE:-/nonexistent}" ]; then
+    note "Fixer App permissions not verifiable with a user token — set AGENT_APP_ID + AGENT_APP_PRIVATE_KEY_FILE to check. Needed: issues write + issue-dependencies write (edge upserts fail closed and comment if missing)"
+    return
+  fi
+  local jwt perms
+  jwt="$(_app_jwt "$AGENT_APP_ID" "$AGENT_APP_PRIVATE_KEY_FILE")"
+  perms="$(curl -fsS -H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" \
+             "https://api.github.com/repos/$1/installation" 2>/dev/null | jq '.permissions // empty')"
+  if [ -z "$perms" ]; then
+    bad "Fixer App does not appear to be installed on $1 (or the JWT was rejected)"
+    return
+  fi
+  local issues deps
+  issues="$(printf '%s' "$perms" | jq -r '.issues // "none"')"
+  [ "$issues" = "write" ] && ok "App permission issues: write" || bad "App permission issues: $issues (need write)"
+  deps="$(printf '%s' "$perms" | jq -r 'to_entries[] | select(.key | test("dependenc")) | "\(.key)=\(.value)"')"
+  if [ -n "$deps" ]; then
+    printf '%s\n' "$deps" | grep -q '=write$' \
+      && ok "App permission $deps" \
+      || bad "App permission $deps (need write — edge upserts will fail closed)"
+  else
+    note "no dependencies-specific permission key reported; full map: $(printf '%s' "$perms" | jq -c .)"
+  fi
 }
 
 check_stub() { # repo default-branch
@@ -129,10 +203,13 @@ main() {
   local def; def="$(gh repo view "$repo" --json defaultBranchRef --jq .defaultBranchRef.name)"
 
   printf 'smallhours doctor — %s (@%s expected, default branch %s)\n' "$repo" "$EXPECT_REF" "$def"
+  load_consumer_config "$repo" "$def"
   check_secrets "$repo"
   check_labels "$repo"
   check_stub "$repo" "$def"
   check_config "$repo" "$def"
+  check_triage_doc "$repo" "$def"
+  check_app_permissions "$repo"
   check_secret_scanning "$repo"
   check_auto_delete "$repo"
   check_protection "$repo" "$def"

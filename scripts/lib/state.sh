@@ -24,21 +24,25 @@ _sh_is_state_label() {
   return 1
 }
 
-# Current state label(s) on an issue — should be zero or one; more than one is
+# Current state label(s) on an issue, as they appear on the repo (resolved
+# strings, not canonical names) — should be zero or one; more than one is
 # drift that state_set_issue heals on its next call.
 state_current() { # issue-number
   local repo; repo="$(sh_repo)"
   gh issue view "$1" --repo "$repo" --json labels \
-    --jq '.labels[].name' | grep -Fxf <(printf '%s\n' "${SMALLHOURS_STATE_LABELS[@]}") || true
+    --jq '.labels[].name' | grep -Fxf <(state_labels_resolved) || true
 }
 
-# Move an issue to exactly one state label. Adds the target first (so the issue
-# is never momentarily label-less), then strips every OTHER state label present.
+# Move an issue to exactly one state label. Takes the CANONICAL name and
+# resolves it through the labels: mapping at this choke point — callers never
+# see repo label strings. Adds the target first (so the issue is never
+# momentarily label-less), then strips every OTHER state label present.
 # Idempotent: re-setting the current state is a no-op that still heals drift.
-state_set_issue() { # issue-number new-state
-  local issue="$1" want="$2" repo
+state_set_issue() { # issue-number new-state(canonical)
+  local issue="$1" canonical="$2" want repo
   repo="$(sh_repo)"
-  _sh_is_state_label "$want" || sh_die "not a state label: '$want'"
+  _sh_is_state_label "$canonical" || sh_die "not a state label: '$canonical'"
+  want="$(label_for "$canonical")" || sh_die "label mapping failed for '$canonical'"
 
   # Add the target label. --add-label is idempotent on GitHub's side.
   gh issue edit "$issue" --repo "$repo" --add-label "$want" >/dev/null
@@ -56,21 +60,28 @@ state_set_issue() { # issue-number new-state
     for l in "${remove[@]}"; do args+=(--remove-label "$l"); done
     gh issue edit "$issue" --repo "$repo" "${args[@]}" >/dev/null
   fi
-  sh_log "issue #$issue state -> $want"
+  sh_log "issue #$issue state -> $canonical ($want)"
 }
 
 # ── PR marker labels (not the state axis) ─────────────────────────────────────
+# Args are CANONICAL names, resolved here (same choke-point rule as above).
 state_pr_add_label() { # pr-number label...
   local pr="$1"; shift
-  local repo args=() l; repo="$(sh_repo)"
-  for l in "$@"; do args+=(--add-label "$l"); done
+  local repo args=() l r; repo="$(sh_repo)"
+  for l in "$@"; do
+    r="$(label_for "$l")" || sh_die "label mapping failed for '$l'"
+    args+=(--add-label "$r")
+  done
   gh pr edit "$pr" --repo "$repo" "${args[@]}" >/dev/null
 }
 
 state_pr_remove_label() { # pr-number label...
   local pr="$1"; shift
-  local repo args=() l; repo="$(sh_repo)"
-  for l in "$@"; do args+=(--remove-label "$l"); done
+  local repo args=() l r; repo="$(sh_repo)"
+  for l in "$@"; do
+    r="$(label_for "$l")" || sh_die "label mapping failed for '$l'"
+    args+=(--remove-label "$r")
+  done
   # --remove-label errors if the label isn't present; tolerate that.
   gh pr edit "$pr" --repo "$repo" "${args[@]}" >/dev/null 2>&1 || true
 }
