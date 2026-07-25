@@ -13,3 +13,5 @@ created: 2026-07-17
 ---
 
 implement.sh always builds agent/issue-N (attempt defaults to 1; the workflow passes no attempt), and resets it to origin/base + a new commit before `git push --set-upstream` (no force). If a prior attempt's branch still exists on the remote with divergent history, the push is rejected non-ff. DESIGN says retries should use fresh agent/issue-N-rK branches, but nothing yet increments the attempt on a re-label. Workaround today: delete the stale branch before re-running. Fix: track/increment attempt, or have open-pr/cancel delete the branch on give-up.
+
+**Re-triaged 2026-07-25 (registry audit):** half-paid. implement.sh now accepts an `[attempt]` argument and names branches `agent/issue-N`, `-r2`, `-r3`, … — but agent-loop.yml still never passes it (the workflow's `attempt` output is the auto-fix counter, a different thing). The remaining gap is only the wiring: derive the retry attempt on re-label and pass it through.
