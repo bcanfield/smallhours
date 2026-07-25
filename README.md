@@ -1,3 +1,5 @@
+![smallhours](.github/hero.png)
+
 # smallhours
 
 An autonomous issue → PR system: the maintainer grills issues (externally) and
