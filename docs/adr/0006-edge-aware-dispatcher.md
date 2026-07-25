@@ -119,7 +119,9 @@ chains make review-cadence serialization painful enough to justify stacked PRs.
 
 Recorded here by maintainer choice instead of being published to the tracker;
 publish as real issues (blockers first, edges as native dependencies) when M5.5
-starts, after M5 acceptance scenarios.
+starts, after M5 acceptance scenarios. **Published 2026-07-24** as
+bcanfield/smallhours#7 (06-1), #8 (06-4), #9 (06-5), #10 (06-2), #11 (06-3),
+#12 (06-6), with native dependency edges 10←7, 11←10, 12←7.
 
 ### Spec
 

@@ -29,9 +29,11 @@ label invariant.
 
 | File | Role |
 |---|---|
-| `config.sh` | Load `.smallhours.yml` over defaults; label vocabulary; per-stage model / max-turns getters |
+| `config.sh` | Load `.smallhours.yml` over defaults; label vocabulary + `label_for` resolver (canonical → repo string, ADR 0006/06-1); per-stage model / max-turns getters |
 | `common.sh` | Repo resolution, logging, comments, prompt rendering, linked-issue + branch helpers |
-| `state.sh`  | Atomic issue-state transitions (replace, never accumulate) + PR marker labels |
+| `state.sh`  | Atomic issue-state transitions (replace, never accumulate) + PR marker labels; resolves canonical → repo labels at the choke point |
+| `edges.sh`  | Blocking-edge logic (ADR 0006): `## Blocked by` parsing, native-relation upserts, promotable/plan-change/cycle computation (pure functions, tested in `tests/`) |
+| `tracker-context.sh` | Deterministic implement enrichment: parent spec inlined verbatim + cleared-blocker pointers |
 | `claude-run.sh` | Render managed settings from config, provision the sandbox, run a stage under `--permission-mode acceptEdits`, capture JSON. CLI failure = give-up (no retry) |
 
 ## Stage scripts
@@ -49,3 +51,7 @@ label invariant.
 Phase 2 adds `auto-fix.sh` (M6) and the sweep (M7). The Milestone 3 workflow is
 what maps GitHub events to these entry points; Milestone 5 exercises them
 end-to-end against a real repo.
+
+The pure decision logic (label resolution, edge parsing, promotable/cycle
+computation) is exercised offline by the fixture tests in `tests/` — plain
+bash scripts, no gh/network; run them directly.

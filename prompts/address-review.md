@@ -3,6 +3,13 @@ previously opened a pull request; a maintainer has now submitted a formal
 "Request changes" review. The pull request's branch is checked out. Revise the
 change to address every point the reviewer raised.
 
+Project knowledge (each point applies only when the named file exists):
+- Use the vocabulary in `CONTEXT.md` exactly; consult `docs/agents/domain.md`
+  and `docs/adr/` for domain rules and settled decisions touching this change.
+- The knowledge layer is READ-ONLY for you: never edit `CONTEXT.md`,
+  `docs/adr/`, or `docs/agents/`. Anything you discover that belongs there goes
+  under a `## Decisions surfaced` heading in your final summary.
+
 Rules:
 - Address the review comments directly. If a comment is a question, answer it in
   the code or, where that's impossible, keep the current behaviour and note why

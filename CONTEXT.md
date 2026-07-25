@@ -57,6 +57,11 @@ the edge — it moves dependents to `ready-for-human` (plan change).
 cleared. The dispatcher promotes only promotable issues; an issue with no
 edges is trivially promotable.
 
+**Parent spec** — The spec document a ticket was cut from (the `/to-spec`
+artifact). A ticket names it with a body line `Spec: <#issue | path | URL>`;
+the implement pre-step inlines it verbatim into the agent's context (ADR
+0006). No `Spec:` line means no parent spec — plain issues are unaffected.
+
 **Maintainer** — The human (initially only Brandin) who grills issues, applies
 `ready-for-agent`, reviews PRs, and merges. The only actor with write access who
 participates manually.
