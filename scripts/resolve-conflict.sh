@@ -72,8 +72,12 @@ main() {
   # to a T5 update — still worth pushing. NEVER swallow the merge output: when
   # this path misbehaves, git's own words are the only diagnostic (the same
   # lesson as the claude-run give-up stderr, v0.4.2).
+  # Identity on the MERGE, not just the commit: git merge validates the
+  # committer ident up front and hosted runners have none configured
+  # ("fatal: empty ident name" — found live, first T6 run).
   local conflicted="" merge_out=""
-  if ! merge_out="$(git merge --no-commit --no-ff "origin/$base" 2>&1)"; then
+  if ! merge_out="$(git -c user.name="smallhours" -c user.email="noreply@smallhours" \
+                      merge --no-commit --no-ff "origin/$base" 2>&1)"; then
     printf '%s\n' "$merge_out" >&2
     conflicted="$(git diff --name-only --diff-filter=U)"
     # Second signal: unmerged index entries (belt and braces — a diff oddity
