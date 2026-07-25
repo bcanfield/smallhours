@@ -68,6 +68,12 @@ artifact). A ticket names it with a body line `Spec: <#issue | path | URL>`;
 the implement pre-step inlines it verbatim into the agent's context (ADR
 0006). No `Spec:` line means no parent spec — plain issues are unaffected.
 
+**Sweep** — The scheduled reconciler (Phase 2). Every tick it re-derives from
+GitHub state: updates BEHIND agent PRs (T5), schedules at most one
+conflict-resolution run (T6), re-evaluates green PRs whose T2 never fired,
+reclaims dead `agent-working` slots (watchdog, ~1h), and heals state-label
+drift. Idempotent — late or missed ticks only delay, never corrupt.
+
 **Maintainer** — The human (initially only Brandin) who grills issues, applies
 `ready-for-agent`, reviews PRs, and merges. The only actor with write access who
 participates manually.

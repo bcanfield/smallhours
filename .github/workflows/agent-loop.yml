@@ -14,16 +14,23 @@
 #
 # Routing (DESIGN.md "Transitions"):
 #   issues labeled ready-for-agent          -> authorize (validate + queue) -> dispatch
-#   schedule                                -> dispatch (drain the queue as slots free)
+#   schedule / workflow_dispatch            -> dispatch (drain the queue) + sweep
+#                                              (M7: T5 update-branch, T6 -> resolve-
+#                                              conflict, watchdog, label healing)
 #   issues labeled agent-working            -> implement (guarded: fresh, no open agent PR)
 #   issues closed / unlabeled(agent-working, by a human) -> cancel  (T10 / T11)
 #   pull_request_review changes_requested   -> address-review (T7)
+#   pull_request_review approved/dismissed  -> reeval (green-gated T2 re-run — a
+#                                              lingering changes-requested review
+#                                              held the PR BLOCKED past its green)
+#   pull_request closed unmerged (by a human, `agent` PR) -> cancel pr-closed (T9)
 #   workflow_run completed (consumer CI)    -> state-manager (T2 / T3' / T4)
 #                                              red + attempts left -> auto-fix
 #
 # Self-checkout: jobs that need the toolkit's own files check out
 # ${{ job.workflow_repository }}@${{ job.workflow_sha }} — the EXACT version the
 # consumer invoked (the floating v1 SHA), never drifting from the routing above.
+# The consumer-config composite action rides that same checkout/version.
 # (actionlint <= 1.7.x flags job.workflow_repository/workflow_sha as unknown; its
 # schema is stale — these are documented job-context fields. Not a real error.)
 name: agent-loop
@@ -70,17 +77,9 @@ jobs:
           path: .smallhours-toolkit
       # Label mapping (ADR 0006 / 06-1): every job whose script touches labels
       # needs the consumer config so canonical names resolve.
-      - name: Install yq + fetch consumer config
-        env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
-        run: |
-          set -euo pipefail
-          . .smallhours-toolkit/versions.env
-          curl -fsSL -o "$RUNNER_TEMP/yq" \
-            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
-          sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
-          gh api "repos/${{ github.repository }}/contents/.smallhours.yml" \
-            --jq '.content' 2>/dev/null | base64 -d > "$RUNNER_TEMP/smallhours-config.yml" || true
+      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
+        with:
+          token: ${{ steps.token.outputs.token }}
       - id: gate
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
@@ -116,26 +115,18 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
-      - name: Install yq + fetch consumer config
-        env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
-        run: |
-          set -euo pipefail
-          . .smallhours-toolkit/versions.env
-          curl -fsSL -o "$RUNNER_TEMP/yq" \
-            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
-          sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
-          gh api "repos/${{ github.repository }}/contents/.smallhours.yml" \
-            --jq '.content' 2>/dev/null | base64 -d > "$RUNNER_TEMP/smallhours-config.yml" || true
+      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
+        with:
+          token: ${{ steps.token.outputs.token }}
       - name: Dispatch
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
         run: .smallhours-toolkit/scripts/dispatch.sh
 
-  # ── Dispatcher on the schedule tick — drains the queue as slots free ────────
+  # ── Dispatcher on the schedule tick (or a manual dispatch) — drains the queue
   dispatch_scheduled:
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -154,22 +145,107 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
-      - name: Install yq + fetch consumer config
-        env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
-        run: |
-          set -euo pipefail
-          . .smallhours-toolkit/versions.env
-          curl -fsSL -o "$RUNNER_TEMP/yq" \
-            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
-          sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
-          gh api "repos/${{ github.repository }}/contents/.smallhours.yml" \
-            --jq '.content' 2>/dev/null | base64 -d > "$RUNNER_TEMP/smallhours-config.yml" || true
+      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
+        with:
+          token: ${{ steps.token.outputs.token }}
       - name: Dispatch
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
         run: .smallhours-toolkit/scripts/dispatch.sh
+
+  # ── Sweep (M7): T5/T6 decisions, watchdog, label reconciliation ────────────
+  # Decider only — no sandbox, no Claude. When it finds a DIRTY agent PR it
+  # emits `conflict=<pr>` (at most one per tick) and the resolve_conflict job
+  # below does the actual work, mirroring the ci_state -> auto_fix split.
+  sweep:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    concurrency:
+      group: smallhours-sweep
+      cancel-in-progress: false
+    outputs:
+      conflict_pr: ${{ steps.sw.outputs.conflict_pr }}
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: token
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .smallhours-toolkit
+      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
+        with:
+          token: ${{ steps.token.outputs.token }}
+      - id: sw
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
+        run: |
+          set -euo pipefail
+          out="$(.smallhours-toolkit/scripts/sweep.sh)"
+          case "$out" in
+            conflict=*) echo "conflict_pr=${out#conflict=}" >> "$GITHUB_OUTPUT" ;;
+            *)          echo "conflict_pr="                 >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  # ── T6 body: resolve the DIRTY agent PR the sweep picked; push re-runs CI ──
+  resolve_conflict:
+    needs: sweep
+    if: needs.sweep.outputs.conflict_pr != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    concurrency:
+      group: smallhours-pr-${{ needs.sweep.outputs.conflict_pr }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: token
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ steps.token.outputs.token }}
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .smallhours-toolkit
+      # The toolkit checkout lives inside the consumer worktree; keep `git add -A`
+      # in the scripts from ever committing it (ADR 0005 bugfix).
+      - name: Exclude the toolkit checkout from consumer commits
+        run: echo '/.smallhours-toolkit/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
+      - name: Load pinned versions
+        run: grep -E '^[A-Z_][A-Z0-9_]*=' .smallhours-toolkit/versions.env >> "$GITHUB_ENV"
+      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
+        with:
+          token: ${{ steps.token.outputs.token }}
+          fetch-config: 'false'
+      - name: Provision sandbox (bubblewrap, Claude, managed settings)
+        run: |
+          set -euo pipefail
+          source .smallhours-toolkit/scripts/lib/claude-run.sh
+          claude_run_provision
+      - name: Resolve the merge conflict, report usage
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          T=.smallhours-toolkit/scripts
+          pr="${{ needs.sweep.outputs.conflict_pr }}"
+          "$T/resolve-conflict.sh" "$pr"
+          "$T/report-usage.sh" "$pr" "${RUNNER_TEMP}/smallhours-result.json" resolve_conflict
 
   # ── Guard: a fresh promotion (no open agent PR) vs an address-review re-summon
   implement_guard:
@@ -234,12 +310,10 @@ jobs:
         run: echo '/.smallhours-toolkit/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
       - name: Load pinned versions
         run: grep -E '^[A-Z_][A-Z0-9_]*=' .smallhours-toolkit/versions.env >> "$GITHUB_ENV"
-      - name: Install yq (pinned)
-        run: |
-          set -euo pipefail
-          curl -fsSL -o "$RUNNER_TEMP/yq" \
-            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
-          sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
+      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
+        with:
+          token: ${{ steps.token.outputs.token }}
+          fetch-config: 'false'
       - name: Provision sandbox (bubblewrap, Claude, managed settings)
         run: |
           set -euo pipefail
@@ -289,17 +363,9 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
       # cancel.sh sets mappable state labels — needs the consumer config.
-      - name: Install yq + fetch consumer config
-        env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
-        run: |
-          set -euo pipefail
-          . .smallhours-toolkit/versions.env
-          curl -fsSL -o "$RUNNER_TEMP/yq" \
-            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
-          sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
-          gh api "repos/${{ github.repository }}/contents/.smallhours.yml" \
-            --jq '.content' 2>/dev/null | base64 -d > "$RUNNER_TEMP/smallhours-config.yml" || true
+      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
+        with:
+          token: ${{ steps.token.outputs.token }}
       - env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
@@ -317,6 +383,44 @@ jobs:
           else
             "$T/cancel.sh" label-removed "$issue"
           fi
+
+  # ── T9: a human closed an agent PR without merging — hand the issue back ───
+  # sender.type gate mirrors T11: when cancel.sh itself closes a PR (T10/T11)
+  # the resulting closed event comes from the App (Bot) and must not re-fire.
+  # The `agent` literal is a fixed label (config.sh SMALLHOURS_FIXED_LABELS) —
+  # expression-time gates cannot read the consumer config.
+  pr_closed:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.merged == false &&
+      github.event.sender.type == 'User' &&
+      contains(github.event.pull_request.labels.*.name, 'agent')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    concurrency:
+      group: smallhours-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: token
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .smallhours-toolkit
+      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
+        with:
+          token: ${{ steps.token.outputs.token }}
+      - env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
+        run: .smallhours-toolkit/scripts/cancel.sh pr-closed "${{ github.event.pull_request.number }}"
 
   # ── T7: formal "Request changes" review re-summons the agent ───────────────
   address_review:
@@ -349,12 +453,10 @@ jobs:
         run: echo '/.smallhours-toolkit/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
       - name: Load pinned versions
         run: grep -E '^[A-Z_][A-Z0-9_]*=' .smallhours-toolkit/versions.env >> "$GITHUB_ENV"
-      - name: Install yq (pinned)
-        run: |
-          set -euo pipefail
-          curl -fsSL -o "$RUNNER_TEMP/yq" \
-            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
-          sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
+      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
+        with:
+          token: ${{ steps.token.outputs.token }}
+          fetch-config: 'false'
       - name: Provision sandbox (bubblewrap, Claude, managed settings)
         run: |
           set -euo pipefail
@@ -371,6 +473,44 @@ jobs:
           "$T/address-review.sh" "$pr" \
             "${{ github.event.review.state }}" "${{ github.event.review.user.login }}"
           "$T/report-usage.sh" "$pr" "${RUNNER_TEMP}/smallhours-result.json" address_review
+
+  # ── T2 re-eval: an approval/dismissal unblocked a green agent PR (M7) ──────
+  # A changes-requested review holds mergeStateStatus=BLOCKED when the green
+  # revision's CI event runs state-manager, and the approval that later clears
+  # it fires no workflow_run — this route closes that gap. Green-gated in
+  # reeval.sh; red PRs stay with the auto-fix loop.
+  review_reeval:
+    if: >-
+      github.event_name == 'pull_request_review' &&
+      ( ( github.event.action == 'submitted' &&
+          github.event.review.state == 'approved' ) ||
+        github.event.action == 'dismissed' ) &&
+      contains(github.event.pull_request.labels.*.name, 'agent')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    concurrency:
+      group: smallhours-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: token
+        with:
+          app-id: ${{ secrets.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: .smallhours-toolkit
+      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
+        with:
+          token: ${{ steps.token.outputs.token }}
+      - env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
+        run: .smallhours-toolkit/scripts/reeval.sh "${{ github.event.pull_request.number }}"
 
   # ── T2 / T3' / T4: consumer CI outcome drives PR/issue state ───────────────
   # state-manager.sh decides; when it grants an auto-fix attempt it prints
@@ -404,17 +544,9 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
       # state-manager.sh sets mappable state/marker labels — needs the config.
-      - name: Install yq + fetch consumer config
-        env:
-          GH_TOKEN: ${{ steps.token.outputs.token }}
-        run: |
-          set -euo pipefail
-          . .smallhours-toolkit/versions.env
-          curl -fsSL -o "$RUNNER_TEMP/yq" \
-            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
-          sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
-          gh api "repos/${{ github.repository }}/contents/.smallhours.yml" \
-            --jq '.content' 2>/dev/null | base64 -d > "$RUNNER_TEMP/smallhours-config.yml" || true
+      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
+        with:
+          token: ${{ steps.token.outputs.token }}
       - id: sm
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
@@ -477,12 +609,10 @@ jobs:
         run: echo '/.smallhours-toolkit/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
       - name: Load pinned versions
         run: grep -E '^[A-Z_][A-Z0-9_]*=' .smallhours-toolkit/versions.env >> "$GITHUB_ENV"
-      - name: Install yq (pinned)
-        run: |
-          set -euo pipefail
-          curl -fsSL -o "$RUNNER_TEMP/yq" \
-            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
-          sudo install -m 0755 "$RUNNER_TEMP/yq" /usr/local/bin/yq
+      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
+        with:
+          token: ${{ steps.token.outputs.token }}
+          fetch-config: 'false'
       - name: Provision sandbox (bubblewrap, Claude, managed settings)
         run: |
           set -euo pipefail

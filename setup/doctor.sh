@@ -127,12 +127,19 @@ check_stub() { # repo default-branch
   if [ -z "$ref" ]; then bad "stub has no bcanfield/smallhours agent-loop.yml@REF reference"
   elif [ "$ref" = "$EXPECT_REF" ]; then ok "stub pins @$ref"
   else bad "stub pins @$ref, expected @$EXPECT_REF (version drift)"; fi
-  # The four trigger surfaces must be present or a route silently never fires.
+  # Every trigger surface must be present or a route silently never fires.
+  # (`pull_request:` never substring-matches `pull_request_review:` — the colon
+  # placement differs.)
   local t missing=()
-  for t in "issues:" "pull_request_review:" "workflow_run:" "schedule:"; do
+  for t in "issues:" "pull_request:" "pull_request_review:" "workflow_run:" \
+           "schedule:" "workflow_dispatch:"; do
     printf '%s' "$content" | grep -q "$t" || missing+=("$t")
   done
   [ "${#missing[@]}" -eq 0 ] && ok "stub declares all trigger surfaces" || bad "stub missing triggers: ${missing[*]}"
+  # M7's re-eval route needs review dismissals forwarded.
+  printf '%s' "$content" | grep -q "dismissed" \
+    && ok "stub forwards review dismissals (T2 re-eval route)" \
+    || bad "stub pull_request_review types lack 'dismissed' (re-eval route never fires — re-run setup)"
 }
 
 check_config() { # repo default-branch

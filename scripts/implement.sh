@@ -4,8 +4,11 @@
 #
 #   implement.sh <issue-number> [attempt]
 #
-# attempt (default 1) selects the branch: agent/issue-N, then -r2, -r3, … on
-# retries (fresh branch each time — never force-push seen history).
+# attempt selects the branch: agent/issue-N, then -r2, -r3, … on retries
+# (fresh branch each time — never force-push seen history). When omitted it is
+# DERIVED from the remote: one past the highest agent/issue-N[-rK] branch
+# already minted, so a re-label after an earlier attempt never collides with a
+# surviving branch (a plain re-run on a clean repo still gets attempt 1).
 #
 # On a clean run: commits the working tree, pushes the branch, writes the Claude
 # result JSON to $SMALLHOURS_RESULT_JSON for report-usage.sh, prints the branch.
@@ -20,18 +23,24 @@ _dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_dir/lib/state.sh"
 . "$_dir/lib/claude-run.sh"
 . "$_dir/lib/tracker-context.sh"
+. "$_dir/lib/sweep.sh"
 
 # Kept OUTSIDE the consumer working tree so `git add -A` never commits it.
 RESULT_JSON="${SMALLHOURS_RESULT_JSON:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/smallhours-result.json}"
 
 main() {
   [ "$#" -ge 1 ] || sh_die "usage: implement.sh <issue-number> [attempt]"
-  local issue="$1" attempt="${2:-1}" repo branch base
+  local issue="$1" attempt="${2:-}" repo branch base
   repo="$(sh_repo)"
   sh_require_auth
   [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || sh_die "CLAUDE_CODE_OAUTH_TOKEN not set"
   config_load || sh_die "unreadable .smallhours.yml — refusing to run on defaults"
 
+  if [ -z "$attempt" ]; then
+    attempt="$(git ls-remote --heads origin "agent/issue-${issue}*" \
+                 | awk '{print $2}' | sed 's#^refs/heads/##' \
+                 | sweep_next_attempt "$issue")"
+  fi
   branch="$(sh_agent_branch "$issue" "$attempt")"
   base="$(sh_default_branch)"
 

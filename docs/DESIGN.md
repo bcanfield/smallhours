@@ -86,6 +86,10 @@ mean nothing is red when the maintainer opens the PR.
 - Sweep hard-checks same-repo head before checkout, even though `agent` label
   should already imply it.
 - Label drift (two states, state contradicts PR reality) → sweep reconciles + comments.
+- Approved/dismissed review on an agent PR → re-evaluate T2 (ruling 2026-07-25:
+  an outstanding changes-requested review holds `BLOCKED` past the revision's
+  green CI, and the approval itself fires no CI event — so the review event
+  triggers a green-gated state-manager re-run; red stays with the auto-fix loop).
 - Human rescue commit on agent branch → welcomed; green CI resumes normal flow.
 
 ## Security posture (ADR 0001)

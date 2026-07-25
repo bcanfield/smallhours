@@ -243,6 +243,24 @@ Frontier at start: 06-1 (label mapping),
   no open PR >1h → `ready-for-human`); label-invariant reconciliation.
   `UNKNOWN` merge state → skip.
 
+  > **IMPLEMENTED 2026-07-25** (pending live validation). `sweep.sh` (decider,
+  > no sandbox) runs on schedule *and* a new stub `workflow_dispatch` (manual
+  > tick — the repo's cron is chronically laggy); it emits at most one
+  > `conflict=<pr>` per tick for the new `resolve_conflict` job
+  > (`resolve-conflict.sh` + prompt: merge base in-progress, agent resolves,
+  > system commits the merge; unresolved conflicts = give-up). Decisions live
+  > as pure helpers in `lib/sweep.sh` (tests/test-sweep.sh). Also folded in:
+  > T9 wiring (`pull_request: [closed]` in the stub; human-sender + unmerged +
+  > `agent`-label gated), the approved/dismissed-review → green-gated T2
+  > re-eval (`reeval.sh`, closes debt `phase1-green-not-clean-stranding` —
+  > sweep re-evals green PRs as backstop), retry-attempt derivation from
+  > surviving `agent/issue-N[-rK]` branches (closes `rerun-reuses-agent-branch`),
+  > and the copy-pasted yq/config step became the `consumer-config` composite
+  > action riding the toolkit self-checkout (closes
+  > `config-fetch-step-duplicated`). Watchdog threshold 60m
+  > (`SMALLHOURS_WATCHDOG_MINUTES` override for testing); implement's 40m
+  > timeout can't trip it. Stub gained triggers → consumers re-sync via setup.
+
 ## Future (out of scope until scheduled)
 
 GitLab port (CI/CD component + webhook→pipeline-trigger bridge + schedules) ·
