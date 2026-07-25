@@ -88,9 +88,10 @@ taxes (a)–(c):
 
 | Runtime | Cold start | Artifact | Kills spawn tax? | Kills RTT tax? | Notes |
 |---|---|---|---|---|---|
-| C (static) | 2 ms | 16 KB | yes | yes (hand-rolled) | No safe HTTP/2+TLS+JSON stack without vendoring one — same latency floor as Rust once libcurl et al. are linked, so no headroom *gained* |
-| **Rust (static musl)** | **3 ms** | **350 KB stripped** | **yes — 1 process/job** | **yes — tokio + hyper HTTP/2 multiplex, rustls** | No GC, no runtime; serde JSON ~GB/s-class; LTO+strip |
-| Go (static) | 2 ms | 1.4 MB stripped | yes | yes — goroutines + net/http HTTP/2 | GC + runtime scheduler: measurable, irrelevant at this data scale |
+| Zig 0.14 (static, ReleaseSmall) | 1.1 ms | 5.7 KB | yes | **no native path** — std.http is HTTP/1.1-only, no HTTP/2; TLS client young; practical route is FFI to libcurl/nghttp2 ⇒ C's numbers | Fastest start + smallest binary measured; both leads are worth ~1 ms and ~300 KB per job — ~0.01 % of a runner boot |
+| C (dyn. glibc) | 2.1 ms | 16 KB | yes | yes (hand-rolled) | No safe HTTP/2+TLS+JSON stack without vendoring one — same latency floor as Rust once libcurl et al. are linked, so no headroom *gained* |
+| **Rust (static musl)** | **2.4 ms** | **350 KB stripped** | **yes — 1 process/job** | **yes — tokio + hyper HTTP/2 multiplex, rustls** | No GC, no runtime; serde JSON ~GB/s-class; LTO+strip |
+| Go (static) | 2.6 ms | 1.4 MB stripped | yes | yes — goroutines + net/http HTTP/2 | GC + runtime scheduler: measurable, irrelevant at this data scale |
 | Bun/Node (bundled) | 42 ms (node) | 50–90 MB runtime | yes (1 process) | yes (async) | Cold start + footprint pay per job; node preinstalled on runners mitigates fetch |
 | Python | 13 ms bare; 100–500 ms with real imports | needs runtime | yes | partially (asyncio) | Slowest compute; import time recurs per job |
 | bash + gh/jq/yq (today) | 3 ms | 0 (preinstalled) | no | **no — structurally cannot** | Baseline |
@@ -105,6 +106,24 @@ a fatter binary; on measured cold start it ties. If "raw performance, nothing
 else" is the criterion, Rust is the answer; Go is the answer to a question
 that wasn't asked (fastest to build), and it trails on every raw metric it
 differs on, however slightly.
+
+**Zig, examined properly** (Zig 0.14.1 toolchain, measured on this container):
+Zig wins both microbenchmarks outright — 1.1 ms cold start vs Rust's 2.4 ms,
+5.7 KB binary vs 350 KB — and part of even that gap is a linker artifact (the
+Zig binary is fully static; the C/Rust hellos are glibc PIEs paying the
+`ld.so` toll a musl-static Rust build also skips). But the crown is decided by
+tax (c), the sequential-RTT tax, and there Zig has **no native path to the
+winning design**: as of 0.14, `std.http.Client` speaks HTTP/1.1 only (no
+HTTP/2 multiplexing), `std.crypto.tls` is a young TLS-1.3-only client,
+async/await has been out of the language since 0.11, and RS256 (the App-token
+JWT, §5) needs RSA signing the std library doesn't provide. The practical Zig
+implementation therefore links libcurl/nghttp2/OpenSSL — at which point the
+hot path *is* C and lands on exactly C's row and C's numbers: the floor is
+tied, no headroom gained. That is why Zig shares C's verdict line. Its two
+genuine leads — ~1.3 ms of start time and ~300 KB of artifact per job — amortize
+against a 15 s runner boot to ~0.01 %, i.e. below measurement noise on any
+route. Strictly on raw performance Zig ties Rust at the ceiling; it cannot
+raise it, and it reaches it only by becoming C.
 
 Framework: **none.** An orchestration CLI of this size wants tokio + hyper
 (or reqwest-on-hyper) + serde + a YAML crate + `jsonwebtoken` (see §5) and
@@ -182,7 +201,7 @@ belong on the record:
 |---|---|---|
 | 1 | **Rust, no framework, static musl binary, tokio/hyper/rustls/serde, GraphQL-batched, SHA-pinned prebuilt artifact** | Ties the C floor (3 ms start, 350 KB, zero GC) while actually reaching it; kills all three measured taxes; erases the yq install and token-mint action |
 | 2 | Go, same architecture | Indistinguishable in practice (2 ms start measured); loses only on GC/binary-size technicalities — the raw-metrics runner-up |
-| 3 | C / Zig | No headroom left to win; everything above the sockets must be vendored to tie Rust |
+| 3 | C / Zig | Zig measurably wins cold start (1.1 ms) and binary size (5.7 KB) — worth ~0.01 % of a job; no native HTTP/2/async/RSA path, so both must vendor or FFI a C stack to tie Rust's floor, gaining nothing above the sockets |
 | — | Node/Bun, Python | Strictly dominated on every raw metric |
 | — | bash (status quo) | Structurally cannot fix the sequential-RTT tax, which is 80 %+ of controllable script time |
 
