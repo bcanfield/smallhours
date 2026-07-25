@@ -69,12 +69,25 @@ main() {
 
   # Start the merge; a conflict is expected (that is why we are here). If it
   # merges cleanly (the DIRTY reading was stale), committing it is equivalent
-  # to a T5 update — still worth pushing.
-  local conflicted=""
-  if ! git merge --no-commit --no-ff "origin/$base" >/dev/null 2>&1; then
+  # to a T5 update — still worth pushing. NEVER swallow the merge output: when
+  # this path misbehaves, git's own words are the only diagnostic (the same
+  # lesson as the claude-run give-up stderr, v0.4.2).
+  local conflicted="" merge_out=""
+  if ! merge_out="$(git merge --no-commit --no-ff "origin/$base" 2>&1)"; then
+    printf '%s\n' "$merge_out" >&2
     conflicted="$(git diff --name-only --diff-filter=U)"
-    [ -n "$conflicted" ] || _give_up "$pr" "$issue" \
-      "the merge of \`$base\` failed but left no conflicted files (see workflow logs)"
+    # Second signal: unmerged index entries (belt and braces — a diff oddity
+    # must not turn a resolvable conflict into a give-up).
+    [ -n "$conflicted" ] || conflicted="$(git ls-files -u | awk '{print $4}' | sort -u)"
+    if [ -z "$conflicted" ]; then
+      sh_log "resolve-conflict: merge failed with no unmerged paths; git status:"
+      git status --porcelain >&2 || true
+      _give_up "$pr" "$issue" \
+        "the merge of \`$base\` failed without leaving conflicts to resolve. Git said: $(printf '%s' "$merge_out" | tail -c 400)"
+    fi
+  else
+    printf '%s\n' "$merge_out" >&2
+    sh_log "resolve-conflict: merge of $base completed without conflicts (stale DIRTY reading) — pushing the update"
   fi
 
   if [ -n "$conflicted" ]; then
