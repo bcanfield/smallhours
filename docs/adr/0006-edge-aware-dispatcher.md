@@ -151,14 +151,14 @@ knowledge layer; installing skill files into the runner.
 
 ### Tickets
 
-| # | Ticket | Blocked by | Delivers |
-|---|---|---|---|
-| 06-1 | Label mapping | — | `labels:` in `.smallhours.yml` + resolver used by all scripts; canonical defaults |
-| 06-2 | Edge-aware promotion | 06-1 | dispatch.sh upserts `## Blocked by` → native relations; promotes only promotable; unresolvable ref waits + one-time comment |
-| 06-3 | Plan-change ejection | 06-2 | NOT_PLANNED blocker → dependents `ready-for-human` + comment; cycle detection → members ejected + comment |
-| 06-4 | Tracker-context assembly | — | implement pre-step inlines parent spec verbatim + pointer per cleared blocker |
-| 06-5 | Prompt discipline | — | implement.md: knowledge guidance, ADR guardrail, TDD-at-seams, closing self-review, read-only paths; address-review.md: knowledge + read-only only |
-| 06-6 | Setup & doctor | 06-1 | setup-repo.sh imports `triage-labels.md` + appends system-owned-states note; doctor checks mapping drift + App dependencies permission |
+| #    | Ticket                   | Blocked by | Delivers                                                                                                                                           |
+| ---- | ------------------------ | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 06-1 | Label mapping            | —          | `labels:` in `.smallhours.yml` + resolver used by all scripts; canonical defaults                                                                  |
+| 06-2 | Edge-aware promotion     | 06-1       | dispatch.sh upserts `## Blocked by` → native relations; promotes only promotable; unresolvable ref waits + one-time comment                        |
+| 06-3 | Plan-change ejection     | 06-2       | NOT_PLANNED blocker → dependents `ready-for-human` + comment; cycle detection → members ejected + comment                                          |
+| 06-4 | Tracker-context assembly | —          | implement pre-step inlines parent spec verbatim + pointer per cleared blocker                                                                      |
+| 06-5 | Prompt discipline        | —          | implement.md: knowledge guidance, ADR guardrail, TDD-at-seams, closing self-review, read-only paths; address-review.md: knowledge + read-only only |
+| 06-6 | Setup & doctor           | 06-1       | setup-repo.sh imports `triage-labels.md` + appends system-owned-states note; doctor checks mapping drift + App dependencies permission             |
 
 Frontier at start: 06-1, 06-4, 06-5 (parallelizable). 06-2 → 06-3 chain and
 06-6 follow 06-1.
