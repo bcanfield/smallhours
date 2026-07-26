@@ -31,6 +31,16 @@
       <feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="3" seed="7" stitchTiles="stitch"/>
       <feColorMatrix type="matrix" values="0 0 0 0 0.85  0 0 0 0 0.70  0 0 0 0 0.52  0 0 0 0.035 0"/>
     </filter>
+    <marker id="arrow-ci" viewBox="0 0 16 16" refX="13" refY="8" markerWidth="16" markerHeight="16"
+      orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M 3 3.5 L 13 8 L 3 12.5" transform="rotate(-14 13 8)" fill="none" stroke="rgba(139,150,138,0.65)" stroke-width="1.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arrow-exit" viewBox="0 0 16 16" refX="13" refY="8" markerWidth="16" markerHeight="16"
+      orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M 3 3.5 L 13 8 L 3 12.5" fill="none" stroke="rgba(139,150,138,0.38)" stroke-width="1.4"
+        stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
     <radialGradient id="vignette" cx="50%" cy="46%" r="72%">
       <stop offset="60%" stop-color="#000000" stop-opacity="0"/>
       <stop offset="100%" stop-color="#000000" stop-opacity="0.22"/>
@@ -106,8 +116,7 @@
   <text x="500" y="514" font-size="13" font-style="italic" fill="rgba(139,150,138,0.85)" text-anchor="middle">becomes a draft pr</text>
 
   <!-- ci self-loop under agent-working -->
-  <path d="M 695 513 A 20 20 0 1 1 715 513" stroke="rgba(139,150,138,0.65)" stroke-width="1.5" fill="none" stroke-linecap="round"/>
-  <path d="M 729 513 L 715 513 L 722 501" stroke="rgba(139,150,138,0.65)" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 691 511 A 20 20 0 1 1 719 511" stroke="rgba(139,150,138,0.65)" stroke-width="1.5" fill="none" stroke-linecap="round" marker-end="url(#arrow-ci)"/>
   <text x="705" y="572" font-size="13" font-style="italic" fill="rgba(139,150,138,0.80)" text-anchor="middle">fixes ci until green</text>
 
   <!-- changes requested: back across the seam -->
@@ -116,8 +125,7 @@
   <text x="948" y="600" font-size="13.5" font-style="italic" fill="rgba(217,154,82,0.72)" text-anchor="middle">changes requested</text>
 
   <!-- the quiet side door -->
-  <path d="M 652 444 C 600 520, 545 585, 512 625" stroke="rgba(139,150,138,0.38)" stroke-width="1.4" fill="none" stroke-linecap="round"/>
-  <path d="M 521 612 L 512 625 L 524 631" stroke="rgba(139,150,138,0.38)" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 652 444 C 600 520, 545 585, 512 625" stroke="rgba(139,150,138,0.38)" stroke-width="1.4" fill="none" stroke-linecap="round" marker-end="url(#arrow-exit)"/>
   <g transform="rotate(-0.6 455 655)">
     <rect x="377" y="637" width="156" height="36" rx="18" fill="none" stroke="rgba(139,150,138,0.35)" stroke-width="1.2"/>
     <text x="455" y="660" font-size="13.5" fill="rgba(139,150,138,0.80)" text-anchor="middle">ready-for-human</text>
