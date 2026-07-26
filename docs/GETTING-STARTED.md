@@ -10,15 +10,11 @@ agent (next section) and your share shrinks to a few clicks and one review.
 
 The walkthrough is written to be followed by you **or** by a coding agent
 acting for you — the same numbered steps, the same remedies. To delegate
-it, paste this into Claude Code (or any agent with shell access) inside
-the repo you're onboarding, on the machine where `gh` and `claude` are
-authed:
-
-> Set up smallhours on this repo for me: follow the walkthrough in
-> https://github.com/bcanfield/smallhours/blob/main/docs/GETTING-STARTED.md
-> under its agent contract — do everything you can yourself, hand me only
-> what the contract marks as mine, and finish with a clean
-> `setup/doctor.sh` and the canary in my review queue.
+it, paste the two-line prompt from the README's
+[Start](../README.md#start) section into Claude Code (or any agent with
+shell access) inside the repo you're onboarding, on the machine where
+`gh` and `claude` are authed. Everything the agent needs beyond that
+prompt is below.
 
 "This repo" is whatever the working directory's git remote says — an
 agent that can't resolve a single `<owner/repo>` from it should ask,
@@ -26,12 +22,18 @@ never guess.
 
 ### The agent contract
 
-If you are an agent following this document, the split is:
+If you are an agent following this document: your goal is a clean
+`setup/doctor.sh` and the canary PR waiting in the human's review queue,
+touching the human only at the four reserved moments below. Report back
+what the contract marks as theirs; do everything else yourself. The
+split is:
 
-**Yours: everything scriptable.** The clone (step 1); `create-app.sh`
-(step 2); `setup-repo.sh` (step 5) — after step 3's secret exists, since
-its checklist fails without it (both scripts are idempotent, so re-running
-is always safe); creating the canary and labeling it `ready-for-agent`
+**Yours: everything scriptable.** The clone (step 1) — into a temp or
+sibling directory, never inside the consumer repo's working tree;
+`create-app.sh` (step 2); `setup-repo.sh` (step 5) — after step 3's
+secret exists, since its checklist fails without it (both scripts are
+idempotent, so re-running is always safe); creating the canary and
+labeling it `ready-for-agent`
 only once the stub is on the default branch (after the onboarding PR
 merges, when one opens); and diagnosing stalls against step 6's numbered
 list by polling short `gh` calls — never a long sleep. `setup/doctor.sh`
