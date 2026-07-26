@@ -34,6 +34,53 @@ sweep_merge_action() { # mergeStateStatus
   esac
 }
 
+# ── Pure: is every reported check settled and non-failing? ───────────────────
+# stdin: the PR's statusCheckRollup array (gh pr view --json statusCheckRollup).
+# Check runs report .status + .conclusion; legacy commit statuses report .state.
+# Prints "true" only when nothing is failing and nothing is still running.
+# Deliberately counts NON-required checks too: DESIGN rules that UNSTABLE (a
+# non-required check red) is not "ready" — "ready" must mean nothing is red
+# when the maintainer opens the PR.
+sweep_checks_green() {
+  jq -rs '
+    (add // []) as $c
+    | ([ $c[] | (.status // "") | ascii_upcase
+         | select(. == "QUEUED" or . == "IN_PROGRESS" or . == "PENDING") ] | length) as $running
+    | ([ $c[] | (.conclusion // .state // "") | ascii_upcase
+         | select(. == "FAILURE" or . == "TIMED_OUT" or . == "CANCELLED"
+               or . == "ACTION_REQUIRED" or . == "STARTUP_FAILURE"
+               or . == "ERROR" or . == "PENDING") ] | length) as $bad
+    | ($running == 0 and $bad == 0)'
+}
+
+# ── Pure: does a green CI run promote this PR to "ready" (T2)? ───────────────
+# CLEAN                                    -> promote (the original T2)
+# UNKNOWN                                  -> skip (DESIGN: next tick retries)
+# BLOCKED + REVIEW_REQUIRED + checks green -> promote. The only outstanding
+#   gate is the maintainer's review, which is precisely what `in-review` means
+#   (CONTEXT.md: "the PR is ready and the maintainer's review is the only thing
+#   pending"). Without this, a consumer whose branch protection requires an
+#   approving review can never reach T2 from CI alone: the PR stays a draft,
+#   the issue stays `agent-working`, and nothing ever tells the maintainer a
+#   reviewable PR is waiting — so the approval that would unblock it is never
+#   prompted, and the sweep's re-eval re-derives the same BLOCKED forever.
+# everything else (BEHIND/DIRTY/UNSTABLE, or CHANGES_REQUESTED) -> hold. A
+#   changes-requested review is T7's business, not T2's.
+sweep_t2_decision() { # mergeStateStatus reviewDecision checks-green(true|false)
+  case "$1" in
+    CLEAN)   echo promote ;;
+    UNKNOWN) echo skip ;;
+    BLOCKED)
+      if [ "$2" = "REVIEW_REQUIRED" ] && [ "$3" = "true" ]; then
+        echo promote
+      else
+        echo hold
+      fi
+      ;;
+    *)       echo hold ;;
+  esac
+}
+
 # ── Pure: watchdog staleness ─────────────────────────────────────────────────
 # Prints "true" when labeled-at is more than threshold-minutes before now.
 # ISO-8601 parsing via jq (portable — GNU/BSD `date -d` flags differ).
