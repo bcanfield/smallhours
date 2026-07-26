@@ -54,6 +54,7 @@ check_secrets() { # repo
     esac
     printf '%s\n' "$present" | grep -Fxq "$s" && ok "secret $s" || bad "secret $s missing — fix: $fix"
   done
+  note "presence only — an empty or expired value still passes (an interrupted 'gh secret set' can store empty); validity is proven by the first agent-loop run"
 }
 
 check_labels() { # repo
@@ -208,10 +209,21 @@ check_auto_delete() { # repo
     || bad "auto-delete head branch on merge not enabled (merged agent branches will linger) — fix: gh repo edit $1 --delete-branch-on-merge"
 }
 
+# Check for the workflow the CONSUMER's config gates on (default 'ci'), not a
+# hardcoded name — a repo onboarded with --ci-workflow "Build" must pass. Exact
+# match first: workflow_run filters are case-sensitive, so a case-only hit is
+# itself drift, with its own remedy.
 check_ci() { # repo
-  gh api "repos/$1/actions/workflows" --jq '.workflows[] | select(.state=="active") | .name' 2>/dev/null | grep -qiE '^ci$' \
-    && ok "a CI workflow exists (the loop keys off it)" \
-    || bad "no active CI workflow named 'ci' — fix: add one (docs/GETTING-STARTED.md#prerequisites) or set ci_workflow in .smallhours.yml to your workflow's name"
+  local want names
+  want="$(config_ci_workflow)"
+  names="$(gh api "repos/$1/actions/workflows" --jq '.workflows[] | select(.state=="active") | .name' 2>/dev/null)"
+  if printf '%s\n' "$names" | grep -qxF "$want"; then
+    ok "CI workflow '$want' exists (the loop keys off it)"
+  elif printf '%s\n' "$names" | grep -qixF "$want"; then
+    bad "CI workflow case mismatch: config gates on '$want', repo has '$(printf '%s\n' "$names" | grep -ixF "$want" | head -1)' — workflow_run filters are case-sensitive; fix: re-run setup/setup-repo.sh $1 --ci-workflow with the exact display name"
+  else
+    bad "no active CI workflow named '$want' — fix: add one (docs/GETTING-STARTED.md#prerequisites) or set ci_workflow in .smallhours.yml to your workflow's exact display name"
+  fi
 }
 
 usage() { echo "usage: doctor.sh <owner/repo> [--expect-ref v1]" >&2; }
