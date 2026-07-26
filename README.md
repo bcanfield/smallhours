@@ -12,6 +12,8 @@ between those moments.
 
 ## The loop
 
+![The smallhours loop. You write the issue, label it ready-for-agent, review, and merge. The agents carry it through agent-working — issue becomes branch becomes a draft PR, fixing CI until green — up to in-review. Requesting changes sends it back to them; work that needs a person exits to ready-for-human.](.github/loop.png)
+
 Fill the board with issues worth solving. Label what's ready:
 
 `ready-for-agent`
@@ -30,10 +32,6 @@ You come back to finished work—not an endless stream of notifications.
 Review. Merge. Repeat.
 
 ## The board
-
-```
-ready-for-agent → agent-working → in-review → closed
-```
 
 One state label per issue. The board always reflects reality.
 
@@ -54,14 +52,12 @@ Agents can build, iterate, and revise, but approval always belongs to you.
 
 Paste this into Claude Code, in the repo you want to onboard:
 
-> Set up smallhours on this repo for me: follow the walkthrough in
-> https://github.com/bcanfield/smallhours/blob/main/docs/GETTING-STARTED.md
-> under its agent contract — do everything you can yourself, hand me only
-> what the contract marks as mine, and finish with a clean
-> `setup/doctor.sh` and the canary in my review queue.
+> Set up smallhours on this repo: fetch and follow
+> https://raw.githubusercontent.com/bcanfield/smallhours/main/docs/GETTING-STARTED.md
 
-Your share is a few clicks and one review: creating and installing the
-Fixer App, minting your Claude token, approving the canary PR.
+Your share is a few clicks and one review — the doc tells your agent
+which is which.
 
 Prefer to drive every step yourself — or want the trust boundaries first?
-[Getting started](docs/GETTING-STARTED.md) is the full walkthrough.
+[Getting started](docs/GETTING-STARTED.md) is the same walkthrough,
+written for humans too.
