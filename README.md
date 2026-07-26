@@ -52,13 +52,13 @@ Agents can build, iterate, and revise, but approval always belongs to you.
 
 ## Start
 
-Paste this into Claude Code on your machine:
+Paste this into Claude Code, in the repo you want to onboard:
 
-> Set up smallhours on `<owner/repo>` for me: clone
-> https://github.com/bcanfield/smallhours, read `docs/GETTING-STARTED.md`,
-> and follow the walkthrough under its agent contract — do everything you
-> can yourself, hand me only what the contract marks as mine, and finish
-> with a clean `setup/doctor.sh` and the canary in my review queue.
+> Set up smallhours on this repo for me: follow the walkthrough in
+> https://github.com/bcanfield/smallhours/blob/main/docs/GETTING-STARTED.md
+> under its agent contract — do everything you can yourself, hand me only
+> what the contract marks as mine, and finish with a clean
+> `setup/doctor.sh` and the canary in my review queue.
 
 Your share is a few clicks and one review: creating and installing the
 Fixer App, minting your Claude token, approving the canary PR.
