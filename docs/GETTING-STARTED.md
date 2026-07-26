@@ -10,14 +10,19 @@ agent (next section) and your share shrinks to a few clicks and one review.
 
 The walkthrough is written to be followed by you **or** by a coding agent
 acting for you — the same numbered steps, the same remedies. To delegate
-it, paste this into Claude Code (or any agent with shell access) on the
-machine where `gh` and `claude` are authed:
+it, paste this into Claude Code (or any agent with shell access) inside
+the repo you're onboarding, on the machine where `gh` and `claude` are
+authed:
 
-> Set up smallhours on `<owner/repo>` for me: clone
-> https://github.com/bcanfield/smallhours, read `docs/GETTING-STARTED.md`,
-> and follow the walkthrough under its agent contract — do everything you
-> can yourself, hand me only what the contract marks as mine, and finish
-> with a clean `setup/doctor.sh` and the canary in my review queue.
+> Set up smallhours on this repo for me: follow the walkthrough in
+> https://github.com/bcanfield/smallhours/blob/main/docs/GETTING-STARTED.md
+> under its agent contract — do everything you can yourself, hand me only
+> what the contract marks as mine, and finish with a clean
+> `setup/doctor.sh` and the canary in my review queue.
+
+"This repo" is whatever the working directory's git remote says — an
+agent that can't resolve a single `<owner/repo>` from it should ask,
+never guess.
 
 ### The agent contract
 
