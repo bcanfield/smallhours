@@ -246,6 +246,14 @@ jobs:
           pr="${{ needs.sweep.outputs.conflict_pr }}"
           "$T/resolve-conflict.sh" "$pr"
           "$T/report-usage.sh" "$pr" "${RUNNER_TEMP}/smallhours-result.json" resolve_conflict
+      - name: Upload give-up diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smallhours-resolve-conflict-result
+          path: ${{ runner.temp }}/smallhours-result.json*
+          if-no-files-found: ignore
+          retention-days: 7
 
   # ── Guard: a fresh promotion (no open agent PR) vs an address-review re-summon
   implement_guard:
@@ -332,6 +340,17 @@ jobs:
           if [ -n "$pr" ]; then
             "$T/report-usage.sh" "$pr" "${RUNNER_TEMP}/smallhours-result.json" implement
           fi
+      # On a give-up there is no PR, so report-usage never runs and the result
+      # JSON + stderr die with the runner — the only record of what the agent
+      # actually did. Keep them for a week so the run stays diagnosable.
+      - name: Upload give-up diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smallhours-implement-result
+          path: ${{ runner.temp }}/smallhours-result.json*
+          if-no-files-found: ignore
+          retention-days: 7
 
   # ── Cancellation: T10 (issue closed mid-run) / T11 (a HUMAN removed the state)
   # The sender.type == 'User' guard is essential: the App removes `agent-working`
@@ -473,6 +492,14 @@ jobs:
           "$T/address-review.sh" "$pr" \
             "${{ github.event.review.state }}" "${{ github.event.review.user.login }}"
           "$T/report-usage.sh" "$pr" "${RUNNER_TEMP}/smallhours-result.json" address_review
+      - name: Upload give-up diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smallhours-address-review-result
+          path: ${{ runner.temp }}/smallhours-result.json*
+          if-no-files-found: ignore
+          retention-days: 7
 
   # ── T2 re-eval: an approval/dismissal unblocked a green agent PR (M7) ──────
   # A changes-requested review holds mergeStateStatus=BLOCKED when the green
@@ -629,3 +656,11 @@ jobs:
           "$T/auto-fix.sh" "$pr" "${{ needs.ci_state.outputs.attempt }}" \
             "${{ github.event.workflow_run.id }}"
           "$T/report-usage.sh" "$pr" "${RUNNER_TEMP}/smallhours-result.json" auto_fix
+      - name: Upload give-up diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smallhours-auto-fix-result
+          path: ${{ runner.temp }}/smallhours-result.json*
+          if-no-files-found: ignore
+          retention-days: 7
