@@ -52,16 +52,7 @@ Agents can build, iterate, and revise, but approval always belongs to you.
 
 ## Start
 
-Fifteen minutes: an App, a token, one command, one canary.
-
-```sh
-setup/create-app.sh <owner/repo>    # your Fixer App + its two secrets, one click to install
-claude setup-token                  # → gh secret set CLAUDE_CODE_OAUTH_TOKEN
-setup/setup-repo.sh <owner/repo>    # labels, stub, config, protection — ends with a checklist
-```
-
-Or delegate even this — paste into Claude Code and keep only the clicks
-that are structurally yours:
+Paste this into Claude Code on your machine:
 
 > Set up smallhours on `<owner/repo>` for me: clone
 > https://github.com/bcanfield/smallhours, read `docs/GETTING-STARTED.md`,
@@ -69,9 +60,8 @@ that are structurally yours:
 > can yourself, hand me only what the contract marks as mine, and finish
 > with a clean `setup/doctor.sh` and the canary in my review queue.
 
-Then label one trivial canary issue `ready-for-agent` and watch it travel
-the whole loop.
+Your share is a few clicks and one review: creating and installing the
+Fixer App, minting your Claude token, approving the canary PR.
 
-See [Getting started](docs/GETTING-STARTED.md) for the step-by-step
-walkthrough, trust boundaries, and how autonomous execution is kept
-contained.
+Prefer to drive every step yourself — or want the trust boundaries first?
+[Getting started](docs/GETTING-STARTED.md) is the full walkthrough.
