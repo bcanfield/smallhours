@@ -3,7 +3,50 @@
 Everything you need to onboard a repo and understand what the system will
 and won't do on its own. The [README](../README.md) is the short version;
 this is the operator's version. The walkthrough takes about 15 minutes and
-ends with a merged agent PR.
+ends with a merged agent PR. Follow it yourself, or hand it to a coding
+agent (next section) and your share shrinks to a few clicks and one review.
+
+## Let your agent set it up
+
+The walkthrough is written to be followed by you **or** by a coding agent
+acting for you — the same numbered steps, the same remedies. To delegate
+it, paste this into Claude Code (or any agent with shell access) on the
+machine where `gh` and `claude` are authed:
+
+> Set up smallhours on `<owner/repo>` for me: clone
+> https://github.com/bcanfield/smallhours, read `docs/GETTING-STARTED.md`,
+> and follow the walkthrough under its agent contract — do everything you
+> can yourself, hand me only what the contract marks as mine, and finish
+> with a clean `setup/doctor.sh` and the canary in my review queue.
+
+### The agent contract
+
+If you are an agent following this document, the split is:
+
+**Yours: everything scriptable.** The clone (step 1), running
+`create-app.sh` (step 2) and `setup-repo.sh` (step 5), creating and
+labeling the canary and diagnosing where it stalls against step 6's
+numbered list, and `setup/doctor.sh` to verify each step before starting
+the next — every failure it prints carries its own remedy.
+
+**The human's: the four moments reserved for them.**
+
+1. **The Create App click** (step 2). `create-app.sh` opens their
+   browser; say so before you run it. No browser reachable from your
+   session (remote/headless)? The script can't complete — walk them
+   through the manual fallback instead and verify with `doctor.sh`.
+2. **Minting the token** (step 3). Never run `claude setup-token`
+   yourself — the token would land in your transcript. Have them run
+   both step-3 commands in their own terminal; confirm with `doctor.sh`,
+   not by asking for the value.
+3. **The install click** (step 4).
+4. **Review and merge** — the onboarding PR (when one opens) and the
+   canary PR. Branch protection makes approval structurally theirs;
+   never work around it, and never pass `--skip-protection` unasked.
+
+Secrets move only via `gh secret set`, piped from files — never read key
+material or tokens into your context. End by reporting the setup
+checklist, the doctor output, and where the canary stands.
 
 ## Prerequisites
 
