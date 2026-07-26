@@ -23,38 +23,50 @@ machine where `gh` and `claude` are authed:
 
 If you are an agent following this document, the split is:
 
-**Yours: everything scriptable.** The clone (step 1), running
-`create-app.sh` (step 2) and `setup-repo.sh` (step 5), creating and
-labeling the canary and diagnosing where it stalls against step 6's
-numbered list, and `setup/doctor.sh` to verify each step before starting
-the next — every failure it prints carries its own remedy.
+**Yours: everything scriptable.** The clone (step 1); `create-app.sh`
+(step 2); `setup-repo.sh` (step 5) — after step 3's secret exists, since
+its checklist fails without it (both scripts are idempotent, so re-running
+is always safe); creating the canary and labeling it `ready-for-agent`
+only once the stub is on the default branch (after the onboarding PR
+merges, when one opens); and diagnosing stalls against step 6's numbered
+list by polling short `gh` calls — never a long sleep. `setup/doctor.sh`
+verifies each step before the next: exit 0 is clean, ⚠ lines are
+acceptable, and the App-install check can only warn until the first
+successful run.
 
 **The human's: the four moments reserved for them.**
 
 1. **The Create App click** (step 2). `create-app.sh` opens their
-   browser; say so before you run it. No browser reachable from your
-   session (remote/headless)? The script can't complete — walk them
-   through the manual fallback instead and verify with `doctor.sh`.
+   browser, then blocks on a localhost listener until the click
+   round-trips — say so before you run it, and give it a generous
+   timeout. Without a TTY it won't pause for the install click; the
+   deep link is in its log, and `doctor.sh` verifies. No browser
+   reachable from your session (remote/headless)? The flow can't
+   complete — walk them through the manual fallback instead.
 2. **Minting the token** (step 3). Never run `claude setup-token`
    yourself — the token would land in your transcript. Have them run
-   both step-3 commands in their own terminal; confirm with `doctor.sh`,
-   not by asking for the value.
+   both step-3 commands in their own terminal. An interrupted
+   `gh secret set` can store an *empty* secret that passes every
+   presence check, so the fix for any doubt is re-running it — never
+   showing you the value. Confirm with `gh secret list` / `doctor.sh`.
 3. **The install click** (step 4).
 4. **Review and merge** — the onboarding PR (when one opens) and the
    canary PR. Branch protection makes approval structurally theirs;
    never work around it, and never pass `--skip-protection` unasked.
 
-Secrets move only via `gh secret set`, piped from files — never read key
-material or tokens into your context. End by reporting the setup
-checklist, the doctor output, and where the canary stands.
+Secret material never belongs on a command line or in your context: move
+it only by redirection (`gh secret set … < file.pem`) or in the human's
+own terminal. The App ID and slug are not secrets. End by reporting the
+setup checklist, the doctor output, and where the canary stands.
 
 ## Prerequisites
 
 Have these before starting:
 
 - **A repo with a CI workflow.** The loop keys off your existing CI;
-  green/red is one of the two signals that drive everything. If its display
-  name isn't `ci`, you'll pass the name in step 5.
+  green/red is one of the two signals that drive everything. A workflow
+  named `ci` in any casing is auto-detected and wired with its exact
+  display name; anything else, you'll pass the exact name in step 5.
 - **A Claude subscription** (Pro/Max). The agent runs on a subscription
   OAuth token — never a metered API key.
 - **Tools:** `gh` (authed, `repo` + `workflow` scopes), `jq`, `openssl`,

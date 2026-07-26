@@ -341,9 +341,14 @@ way prints its own remedy; `doctor` flags a missing App install.
 
 > **2026-07-26.** GETTING-STARTED gained the delegate-to-agent path: one
 > paste-prompt plus an agent contract (scriptable steps vs the four
-> human-reserved moments, doctor-as-verifier, secret hygiene, headless
-> fallback); README Start carries the same prompt verbatim. Prompt over
-> packaged skill: debt `agent-setup-prompt-not-skill`.
+> human-reserved moments, sequencing rules, doctor-as-verifier, secret
+> hygiene, headless fallback); README Start is the paste-prompt alone.
+> Prompt over packaged skill: debt `agent-setup-prompt-not-skill`.
+> Tabletop-validated the same day by a fresh agent walking the doc
+> against a fictional consumer; fixes it forced: `create-app.sh` no
+> longer dies without a TTY, doctor's CI check gates on the configured
+> `ci_workflow` (exact-case, case-mismatch gets its own remedy), and the
+> secrets check notes it proves presence only.
 
 ## Future (out of scope until scheduled)
 
