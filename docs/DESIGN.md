@@ -46,7 +46,7 @@ No second label taxonomy: draft/ready + marker labels.
 |---|---|---|
 | Implementing / fixing / resolving | draft | `agent` |
 | CI red, attempt N≤3 (Phase 2) | draft | `agent`, `ci-failing` |
-| Green + `mergeStateStatus == CLEAN` | ready | `agent`, `ready-to-merge` |
+| Green + `CLEAN`, or green + `BLOCKED` awaiting only the required review | ready | `agent`, `ready-to-merge` |
 | Automation gave up | draft | `agent`, `human-needed` |
 
 `agent` on a PR is an ownership marker (automation may touch), never a state.
@@ -58,7 +58,7 @@ mean nothing is red when the maintainer opens the PR.
 | # | Event | Effect |
 |---|---|---|
 | T1 | Maintainer applies `ready-for-agent` | Authorize (labeler has write; fail-closed, remove label + comment on deny) → issue stays `ready-for-agent` (validated + **queued**). A WIP-limited **dispatcher** (ADR 0005) promotes it to `agent-working` when a slot is free → agent implements on `agent/issue-N` → deterministic step opens draft PR (never model-dependent) |
-| T2 | CI green + CLEAN | PR ready + `ready-to-merge`; issue `in-review` |
+| T2 | CI green + `CLEAN`, or CI green + `BLOCKED` whose only outstanding gate is the required review | PR ready + `ready-to-merge`; issue `in-review` |
 | T3 | CI red (Phase 1) | PR stays draft + `ci-failing`; issue `ready-for-human` |
 | T3' | CI red (Phase 2) | Auto-fix attempt N+1 of 3 (consecutive; reset on green) |
 | T4 | 3rd consecutive fix fails | PR `human-needed`; issue `ready-for-human` + reason comment |
@@ -90,6 +90,15 @@ mean nothing is red when the maintainer opens the PR.
   an outstanding changes-requested review holds `BLOCKED` past the revision's
   green CI, and the approval itself fires no CI event — so the review event
   triggers a green-gated state-manager re-run; red stays with the auto-fix loop).
+- Consumer requires an approving review → a green agent PR is `BLOCKED` from the
+  moment it opens (no approval exists yet), so T2 cannot insist on `CLEAN`:
+  green + `BLOCKED` + `reviewDecision == REVIEW_REQUIRED` + nothing
+  failing/running promotes, because "waiting on the maintainer" is exactly what
+  `in-review` means. Insisting on `CLEAN` stranded the PR as a draft with no
+  signal, and no event that could clear it would ever arrive — the approval it
+  was waiting for is the one thing nobody had been told to give (ruling
+  2026-07-26; `setup-repo.sh` sets this protection itself, so a freshly
+  onboarded repo hit it on its first PR).
 - Human rescue commit on agent branch → welcomed; green CI resumes normal flow.
 
 ## Security posture (ADR 0001)

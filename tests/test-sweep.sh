@@ -30,6 +30,45 @@ case_banner "merge-state routing (T5/T6/UNKNOWN/re-eval)"
 [ "$(run sweep_merge_action BLOCKED)" = "reeval" ]        && ok "BLOCKED -> reeval (stranding fix)" || bad "BLOCKED misrouted"
 [ "$(run sweep_merge_action UNSTABLE)" = "reeval" ]       && ok "UNSTABLE -> reeval (state-manager keeps it draft)" || bad "UNSTABLE misrouted"
 
+case_banner "T2 decision (green CI: CLEAN vs review-gated BLOCKED)"
+[ "$(run sweep_t2_decision CLEAN '' true)" = "promote" ] \
+  && ok "CLEAN -> promote (original T2)" || bad "CLEAN not promoted"
+[ "$(run sweep_t2_decision UNKNOWN '' true)" = "skip" ] \
+  && ok "UNKNOWN -> skip (DESIGN)" || bad "UNKNOWN not skipped"
+[ "$(run sweep_t2_decision BLOCKED REVIEW_REQUIRED true)" = "promote" ] \
+  && ok "BLOCKED by the required review alone -> promote" || bad "review-gated PR not promoted"
+[ "$(run sweep_t2_decision BLOCKED REVIEW_REQUIRED false)" = "hold" ] \
+  && ok "review pending but a check is red/running -> hold" || bad "promoted over a red check"
+[ "$(run sweep_t2_decision BLOCKED CHANGES_REQUESTED true)" = "hold" ] \
+  && ok "changes requested -> hold (T7 owns it)" || bad "changes-requested promoted"
+[ "$(run sweep_t2_decision BLOCKED '' true)" = "hold" ] \
+  && ok "BLOCKED for a non-review reason -> hold" || bad "opaque BLOCKED promoted"
+[ "$(run sweep_t2_decision BEHIND '' true)" = "hold" ] \
+  && ok "BEHIND -> hold (T5 updates the branch)" || bad "BEHIND promoted"
+[ "$(run sweep_t2_decision DIRTY '' true)" = "hold" ] \
+  && ok "DIRTY -> hold (T6 resolves)" || bad "DIRTY promoted"
+[ "$(run sweep_t2_decision UNSTABLE '' true)" = "hold" ] \
+  && ok "UNSTABLE -> hold (DESIGN: red is never ready)" || bad "UNSTABLE promoted"
+
+case_banner "check rollup verdict"
+RUN_STDIN='[{"status":"COMPLETED","conclusion":"SUCCESS"},{"status":"COMPLETED","conclusion":"SKIPPED"},{"status":"COMPLETED","conclusion":"NEUTRAL"}]'
+[ "$(run sweep_checks_green)" = "true" ]  && ok "success/skipped/neutral -> green"      || bad "benign conclusions read as red"
+RUN_STDIN='[{"status":"COMPLETED","conclusion":"SUCCESS"},{"status":"COMPLETED","conclusion":"FAILURE"}]'
+[ "$(run sweep_checks_green)" = "false" ] && ok "a failing check -> not green"          || bad "failure missed"
+RUN_STDIN='[{"status":"IN_PROGRESS","conclusion":null}]'
+[ "$(run sweep_checks_green)" = "false" ] && ok "still-running check -> not green"      || bad "in-progress read as green"
+RUN_STDIN='[{"status":"QUEUED","conclusion":null}]'
+[ "$(run sweep_checks_green)" = "false" ] && ok "queued check -> not green"             || bad "queued read as green"
+RUN_STDIN='[{"state":"SUCCESS"}]'
+[ "$(run sweep_checks_green)" = "true" ]  && ok "legacy status SUCCESS -> green"        || bad "legacy success read as red"
+RUN_STDIN='[{"state":"PENDING"}]'
+[ "$(run sweep_checks_green)" = "false" ] && ok "legacy status PENDING -> not green"    || bad "legacy pending read as green"
+RUN_STDIN='[{"state":"ERROR"}]'
+[ "$(run sweep_checks_green)" = "false" ] && ok "legacy status ERROR -> not green"      || bad "legacy error read as green"
+RUN_STDIN='[]'
+[ "$(run sweep_checks_green)" = "true" ]  && ok "no checks reported -> green"           || bad "empty rollup read as red"
+RUN_STDIN=""
+
 case_banner "watchdog staleness (ISO-8601 vs threshold)"
 # now = 2026-07-25T12:00:00Z as epoch
 now=1784980800

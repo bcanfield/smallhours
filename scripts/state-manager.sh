@@ -5,8 +5,12 @@
 #   ci-conclusion: success | failure  (from the consumer CI workflow_run)
 #
 #   success + mergeStateStatus CLEAN -> PR ready + `ready-to-merge`; issue in-review  (T2)
+#   success + BLOCKED whose only outstanding gate is the required review (i.e.
+#     reviewDecision REVIEW_REQUIRED and no check failing/running)
+#                                    -> same T2 promotion: `in-review` IS
+#                                       "waiting on the maintainer" (CONTEXT.md)
 #   success + UNKNOWN                -> attempt labels stripped, else nothing; retried later
-#   success + other (BEHIND/…)       -> leave draft (Phase 1 has no sweep) — logged
+#   success + other (BEHIND/DIRTY/…) -> leave draft — logged; the sweep re-evals
 #   failure, attempts < attempt_cap  -> attempt N+1: label autofix-attempt-N+1,
 #                                       issue stays agent-working, decision
 #                                       `autofix=N+1` printed for the caller to
@@ -25,6 +29,7 @@ set -euo pipefail
 _dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_dir/lib/common.sh"
 . "$_dir/lib/state.sh"
+. "$_dir/lib/sweep.sh"
 
 main() {
   [ "$#" -eq 2 ] || sh_die "usage: state-manager.sh <pr-number> <success|failure>"
@@ -92,23 +97,34 @@ main() {
   # whatever the mergeability turns out to be.
   state_autofix_clear "$pr"
 
-  local merge; merge="$(gh pr view "$pr" --repo "$repo" --json mergeStateStatus --jq .mergeStateStatus)"
-  case "$merge" in
-    CLEAN)
-      sh_log "state-manager: CI green + CLEAN on PR #$pr (T2) -> ready"
+  # One view call feeds the whole T2 decision (lib/sweep.sh, fixture-tested).
+  local view merge review checks decision
+  view="$(gh pr view "$pr" --repo "$repo" --json mergeStateStatus,reviewDecision,statusCheckRollup)"
+  merge="$(jq -r '.mergeStateStatus // ""' <<< "$view")"
+  review="$(jq -r '.reviewDecision // ""' <<< "$view")"
+  checks="$(jq -c '.statusCheckRollup // []' <<< "$view" | sweep_checks_green)"
+  decision="$(sweep_t2_decision "$merge" "$review" "$checks")"
+
+  case "$decision" in
+    promote)
+      if [ "$merge" = "CLEAN" ]; then
+        sh_log "state-manager: CI green + CLEAN on PR #$pr (T2) -> ready"
+      else
+        sh_log "state-manager: CI green on PR #$pr, blocked only by the required review (T2) -> ready, issue to in-review"
+      fi
       gh pr ready --repo "$repo" "$pr" >/dev/null
       state_pr_remove_label "$pr" ci-failing human-needed
       state_pr_add_label "$pr" ready-to-merge
       [ -n "$issue" ] && state_set_issue "$issue" in-review
       ;;
-    UNKNOWN)
+    skip)
       sh_log "state-manager: mergeStateStatus UNKNOWN on PR #$pr — doing nothing, will retry"
       ;;
-    *)
-      # Green but not mergeable (BEHIND/BLOCKED/DIRTY/UNSTABLE). Phase 1 has no
-      # sweep to reconcile this, so leave the PR a draft rather than call a
-      # non-CLEAN PR "ready". Phase 2's sweep (T5/T6, M7) closes this gap.
-      sh_log "state-manager: CI green but mergeStateStatus=$merge on PR #$pr — staying draft (M7 sweep handles)"
+    hold)
+      # Green but genuinely not promotable (BEHIND/DIRTY/UNSTABLE, a
+      # changes-requested review, or a second check still red). Leave it a
+      # draft rather than call it "ready"; the sweep re-evaluates each tick.
+      sh_log "state-manager: CI green but mergeStateStatus=$merge (review: ${review:-none}, checks-green: $checks) on PR #$pr — staying draft"
       state_pr_remove_label "$pr" ci-failing
       ;;
   esac
