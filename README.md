@@ -60,6 +60,15 @@ claude setup-token                  # → gh secret set CLAUDE_CODE_OAUTH_TOKEN
 setup/setup-repo.sh <owner/repo>    # labels, stub, config, protection — ends with a checklist
 ```
 
+Or delegate even this — paste into Claude Code and keep only the clicks
+that are structurally yours:
+
+> Set up smallhours on `<owner/repo>` for me: clone
+> https://github.com/bcanfield/smallhours, read `docs/GETTING-STARTED.md`,
+> and follow the walkthrough under its agent contract — do everything you
+> can yourself, hand me only what the contract marks as mine, and finish
+> with a clean `setup/doctor.sh` and the canary in my review queue.
+
 Then label one trivial canary issue `ready-for-agent` and watch it travel
 the whole loop.
 

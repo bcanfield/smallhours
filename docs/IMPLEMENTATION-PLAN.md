@@ -339,6 +339,12 @@ way prints its own remedy; `doctor` flags a missing App install.
 > checklist (`lib/onboarding.sh`, `tests/test-onboarding.sh`) and mirrors it
 > into the onboarding PR body. Not yet validated on a fresh consumer.
 
+> **2026-07-26.** GETTING-STARTED gained the delegate-to-agent path: one
+> paste-prompt plus an agent contract (scriptable steps vs the four
+> human-reserved moments, doctor-as-verifier, secret hygiene, headless
+> fallback); README Start carries the same prompt verbatim. Prompt over
+> packaged skill: debt `agent-setup-prompt-not-skill`.
+
 ## Future (out of scope until scheduled)
 
 GitLab port (CI/CD component + webhook→pipeline-trigger bridge + schedules) ·
