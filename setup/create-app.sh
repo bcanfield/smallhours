@@ -150,11 +150,17 @@ main() {
     sh_log "→ one click left: install $slug on $repo"
     sh_log "  $install_url"
     open_url "$install_url"
-    printf 'smallhours: press Enter once installed… ' >&2; read -r _
-    if [ -n "$(ob_app_installation "$repo" "$(ob_app_jwt "$id" "$key_file")")" ]; then
-      sh_log "✓ $slug installed on $repo"
+    # No TTY (agent-driven run): don't pause — `read` would fail under set -e
+    # and mask the successful registration. Hand off and let doctor verify.
+    if [ ! -t 0 ]; then
+      sh_log "⚠ non-interactive run — not waiting for the install click; verify afterwards with setup/doctor.sh $repo"
     else
-      sh_log "⚠ $slug still not installed on $repo — finish the click at $install_url, then verify with setup/doctor.sh $repo"
+      printf 'smallhours: press Enter once installed… ' >&2; read -r _
+      if [ -n "$(ob_app_installation "$repo" "$(ob_app_jwt "$id" "$key_file")")" ]; then
+        sh_log "✓ $slug installed on $repo"
+      else
+        sh_log "⚠ $slug still not installed on $repo — finish the click at $install_url, then verify with setup/doctor.sh $repo"
+      fi
     fi
   else
     sh_log "✓ $slug installed on $repo"
