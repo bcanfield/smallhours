@@ -157,17 +157,20 @@ claude_run() {
     # Surface the failure INTO the job log: the runner's temp dir (and the
     # stderr file with the real reason — quota, crash, denial) dies with the
     # runner, so a path reference alone loses the root cause forever.
+    # `--output-format json` writes everything to stdout, so on an
+    # error_max_turns give-up the stderr tail is empty and this digest is the
+    # only surviving evidence — hence the counters, not just the subtype.
     sh_log "claude_run: CLI exited $rc — give-up. stderr tail:"
     tail -n 20 "${out}.stderr" >&2 2>/dev/null || true
     if [ -s "$out" ]; then
-      sh_log "claude_run: partial result JSON (subtype/is_error): $(jq -rc '{subtype, is_error} // empty' "$out" 2>/dev/null || true)"
+      sh_log "claude_run: result (max_turns=$max_turns): $(claude_result_digest "$out")"
     else
       sh_log "claude_run: no result JSON was written"
     fi
     return "$rc"
   fi
   if [ "$(claude_is_error "$out")" = "true" ]; then
-    sh_log "claude_run: result is_error=true — give-up. result subtype: $(claude_result_field "$out" '.subtype')"
+    sh_log "claude_run: result is_error=true — give-up. result (max_turns=$max_turns): $(claude_result_digest "$out")"
     return 1
   fi
   return 0
@@ -179,3 +182,15 @@ claude_is_error()     { claude_result_field "$1" '.is_error' ; }
 claude_num_turns()    { claude_result_field "$1" '.num_turns' ; }
 claude_duration_ms()  { claude_result_field "$1" '.duration_ms' ; }
 claude_result_text()  { claude_result_field "$1" '.result' ; }
+
+# One-line diagnostic digest for the job log. Deliberately excludes `.result`
+# (the agent's own summary): that can be long, and the give-up path already
+# posts it to the issue. Null fields are dropped, since an aborted run may
+# write only some of them. "50/50 turns" and "died on turn 3" are the same
+# give-up until this line tells them apart.
+claude_result_digest() { # out_json
+  jq -rc '{subtype, is_error, num_turns, duration_ms, total_cost_usd,
+           input_tokens:  .usage.input_tokens,
+           output_tokens: .usage.output_tokens}
+          | with_entries(select(.value != null))' "$1" 2>/dev/null || true
+}
