@@ -74,13 +74,16 @@ main() {
 
   # Run. claude_run returns non-zero on give-up (CLI error or is_error).
   if ! claude_run implement "$prompt" "$RESULT_JSON"; then
-    local reason; reason="$(claude_result_text "$RESULT_JSON")"
+    local reason work; reason="$(claude_result_text "$RESULT_JSON")"
     [ -n "$reason" ] || reason="the agent run failed before producing a result (see workflow logs)"
+    work="$(claude_work_summary "${RESULT_JSON}.work")"
     state_set_issue "$issue" ready-for-human
     sh_comment_issue "$issue" \
       "🛑 smallhours could not implement this issue and is handing it back.
 
-**Reason:** ${reason}"
+**Reason:** ${reason}
+
+_${work}_"
     rm -f "$ctx" "$prompt"
     exit 4
   fi

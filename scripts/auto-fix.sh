@@ -28,12 +28,15 @@ RESULT_JSON="${SMALLHOURS_RESULT_JSON:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/smallhour
 _LOG_TAIL_BYTES=20000
 
 _give_up() { # pr issue reason
-  local pr="$1" issue="$2" reason="$3"
+  local pr="$1" issue="$2" reason="$3" work
+  work="$(claude_work_summary "${RESULT_JSON}.work")"
   state_pr_add_label "$pr" human-needed
   [ -n "$issue" ] && state_set_issue "$issue" ready-for-human
   sh_comment_pr "$pr" "🛑 smallhours could not auto-fix the failing CI.
 
-**Reason:** ${reason}"
+**Reason:** ${reason}
+
+_${work}_"
   exit 4
 }
 

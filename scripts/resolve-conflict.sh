@@ -20,13 +20,16 @@ _dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESULT_JSON="${SMALLHOURS_RESULT_JSON:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/smallhours-result.json}"
 
 _give_up() { # pr issue reason
-  local pr="$1" issue="$2" reason="$3"
+  local pr="$1" issue="$2" reason="$3" work
+  work="$(claude_work_summary "${RESULT_JSON}.work")"
   git merge --abort 2>/dev/null || true
   state_pr_add_label "$pr" human-needed
   [ -n "$issue" ] && state_set_issue "$issue" ready-for-human
   sh_comment_pr "$pr" "🛑 smallhours could not resolve this branch's merge conflict with base.
 
-**Reason:** ${reason}"
+**Reason:** ${reason}
+
+_${work}_"
   exit 4
 }
 
