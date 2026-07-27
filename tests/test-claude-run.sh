@@ -45,6 +45,17 @@ cat > "$FIX/clean.json" <<'EOF'
  "usage":{"input_tokens":100,"output_tokens":200}}
 EOF
 
+# The shape a long, mostly-cached run actually writes (mediamtx-connect#211):
+# tiny input_tokens/output_tokens next to a 76-turn count read as "died doing
+# nothing" when the real story — 62k+ tokens/turn, almost all cache reads — is
+# sitting in the two fields the old digest never surfaced.
+cat > "$FIX/cache-heavy.json" <<'EOF'
+{"type":"result","subtype":"error_max_turns","is_error":true,
+ "duration_ms":885911,"num_turns":76,"total_cost_usd":4.5073,
+ "usage":{"input_tokens":208,"output_tokens":62493,
+  "cache_creation_input_tokens":18000,"cache_read_input_tokens":4200000}}
+EOF
+
 # An aborted run can flush only part of the object.
 printf '%s\n' '{"subtype":"error_during_execution","is_error":true}' > "$FIX/partial.json"
 : > "$FIX/empty.json"
@@ -58,8 +69,18 @@ d="$(run claude_result_digest "$FIX/max-turns.json")"
 [ "$(jq -r .total_cost_usd <<< "$d")" = "1.2345" ]            && ok "cost surfaced"          || bad "cost missing: $d"
 [ "$(jq -r .input_tokens <<< "$d")"   = "10000" ]             && ok "input tokens flattened" || bad "input tokens missing: $d"
 [ "$(jq -r .output_tokens <<< "$d")"  = "20000" ]             && ok "output tokens flattened"|| bad "output tokens missing: $d"
+[ "$(jq -r .total_tokens <<< "$d")"   = "30000" ]             && ok "total_tokens sums input+output" || bad "total_tokens wrong: $d"
+[ "$(jq -r .tokens_per_turn <<< "$d")" = "600" ]              && ok "tokens_per_turn = total/num_turns" || bad "tokens_per_turn wrong: $d"
 [ "$(jq -r 'has("result")' <<< "$d")" = "false" ]             && ok "agent summary excluded (it goes on the issue)" || bad "result text leaked into the digest"
 [ "$(printf '%s' "$d" | wc -l)" -eq 0 ]                       && ok "single line (one log entry)" || bad "digest spans lines"
+
+d="$(run claude_result_digest "$FIX/cache-heavy.json")"
+[ "$(jq -r .cache_creation_input_tokens <<< "$d")" = "18000" ]   && ok "cache_creation_input_tokens surfaced" || bad "cache_creation missing: $d"
+[ "$(jq -r .cache_read_input_tokens <<< "$d")"     = "4200000" ] && ok "cache_read_input_tokens surfaced"     || bad "cache_read missing: $d"
+[ "$(jq -r .total_tokens <<< "$d")" = "4280701" ] \
+  && ok "total_tokens includes cache tokens (the turn count's real backing)" || bad "total_tokens wrong: $d"
+[ "$(jq -r .tokens_per_turn <<< "$d")" = "56325" ] \
+  && ok "tokens_per_turn shows the run was cache-heavy, not idle, despite tiny input_tokens" || bad "tokens_per_turn wrong: $d"
 
 case_banner "is_error false is kept, absent fields are dropped"
 d="$(run claude_result_digest "$FIX/clean.json")"
