@@ -74,12 +74,15 @@ main() {
   sh_render_prompt "$_dir/../prompts/address-review.md" "$ctx" "$prompt"
 
   if ! claude_run address_review "$prompt" "$RESULT_JSON"; then
-    local reason; reason="$(claude_result_text "$RESULT_JSON")"
+    local reason work; reason="$(claude_result_text "$RESULT_JSON")"
     [ -n "$reason" ] || reason="the agent run failed before producing a result (see workflow logs)"
+    work="$(claude_work_summary "${RESULT_JSON}.work")"
     [ -n "$issue" ] && state_set_issue "$issue" ready-for-human
     sh_comment_pr "$pr" "🛑 smallhours could not address the requested changes.
 
-**Reason:** ${reason}"
+**Reason:** ${reason}
+
+_${work}_"
     rm -f "$ctx" "$prompt"
     exit 4
   fi
