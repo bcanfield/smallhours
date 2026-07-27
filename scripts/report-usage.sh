@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # report-usage.sh — post the per-run usage comment on a PR (turns, duration,
-# stage). DESIGN: every agent run posts one of these. Reads the JSON that
-# claude_run captured (claude -p --output-format json).
+# stage, tool-use digest). DESIGN: every agent run posts one of these. Reads
+# the terminal result event claude_run extracted from the stream, plus its
+# sibling `<result-json>.work` tool-use digest (claude_work_digest).
 #
 #   report-usage.sh <pr-number> <result-json> <stage>
 #
@@ -25,11 +26,13 @@ main() {
   sh_require_auth
   [ -s "$json" ] || { sh_log "report-usage: $json missing/empty — nothing to report"; exit 0; }
 
-  local turns dur
+  local turns dur work
   turns="$(claude_num_turns "$json")"; [ -n "$turns" ] || turns="unknown"
   dur="$(_fmt_duration "$(claude_duration_ms "$json")")"
+  work="$(claude_work_summary "${json}.work")"
 
-  sh_comment_pr "$pr" "🤖 **smallhours · ${stage}** — ${turns} turns · ${dur}"
+  sh_comment_pr "$pr" "🤖 **smallhours · ${stage}** — ${turns} turns · ${dur}
+${work}"
 }
 
 main "$@"
