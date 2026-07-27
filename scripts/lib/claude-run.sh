@@ -211,12 +211,27 @@ claude_result_text()  { claude_result_field "$1" '.result' ; }
 # (the agent's own summary): that can be long, and the give-up path already
 # posts it to the issue. Null fields are dropped, since an aborted run may
 # write only some of them. "50/50 turns" and "died on turn 3" are the same
-# give-up until this line tells them apart.
+# give-up until this line tells them apart — and turn count alone is just as
+# blind: `.usage.input_tokens`/`output_tokens` exclude cache tokens, so a run
+# that's mostly cache reads can show a handful of input tokens across 76 turns.
+# total_tokens sums all four usage counters (cache included) and
+# tokens_per_turn normalizes by num_turns, so "76 turns" reads as
+# "76 turns, ~800 tokens/turn" instead of a bare, unbacked count.
 claude_result_digest() { # out_json
-  jq -rc '{subtype, is_error, num_turns, duration_ms, total_cost_usd,
-           input_tokens:  .usage.input_tokens,
-           output_tokens: .usage.output_tokens}
-          | with_entries(select(.value != null))' "$1" 2>/dev/null || true
+  jq -rc '
+    ((.usage.input_tokens // 0) + (.usage.output_tokens // 0)
+      + (.usage.cache_creation_input_tokens // 0)
+      + (.usage.cache_read_input_tokens // 0)) as $total
+    | {subtype, is_error, num_turns, duration_ms, total_cost_usd,
+       input_tokens:                .usage.input_tokens,
+       output_tokens:               .usage.output_tokens,
+       cache_creation_input_tokens: .usage.cache_creation_input_tokens,
+       cache_read_input_tokens:     .usage.cache_read_input_tokens,
+       total_tokens:   (if $total > 0 then $total else null end),
+       tokens_per_turn: (if ($total > 0 and (.num_turns // 0) > 0)
+                         then (($total / .num_turns) | round) else null end)}
+    | with_entries(select(.value != null))
+  ' "$1" 2>/dev/null || true
 }
 
 # Derive a tool-use digest from a stream-json event log: how many times each
