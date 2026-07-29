@@ -94,8 +94,7 @@ main() {
   sh_render_prompt "$_dir/../prompts/auto-fix.md" "$ctx" "$prompt"
 
   if ! claude_run auto_fix "$prompt" "$RESULT_JSON"; then
-    local reason; reason="$(claude_result_text "$RESULT_JSON")"
-    [ -n "$reason" ] || reason="the agent run failed before producing a result (see workflow logs)"
+    local reason; reason="$(claude_give_up_reason "$RESULT_JSON" auto_fix)"
     rm -f "$ctx" "$prompt"
     _give_up "$pr" "$issue" "$reason"
   fi
@@ -110,7 +109,16 @@ main() {
   fi
   git -c user.name="smallhours" -c user.email="noreply@smallhours" \
     commit -m "smallhours: auto-fix CI attempt ${attempt} on #${pr}" --quiet
-  git push origin "$head"
+  # Same reasoning as the no-changes branch above: an unpushed fix never
+  # re-runs CI, so the PR would sit red forever waiting on a push that failed.
+  local push_err
+  if ! push_err="$(sh_push origin "$head")"; then
+    _give_up "$pr" "$issue" "the fix was committed but the push to \`${head}\` was rejected, so CI will not re-run:
+
+\`\`\`
+${push_err}
+\`\`\`"
+  fi
 
   sh_log "auto-fix: attempt $attempt pushed to $head — CI will re-run"
 }

@@ -110,8 +110,7 @@ main() {
     sh_render_prompt "$_dir/../prompts/resolve-conflict.md" "$ctx" "$prompt"
 
     if ! claude_run resolve_conflict "$prompt" "$RESULT_JSON"; then
-      local reason; reason="$(claude_result_text "$RESULT_JSON")"
-      [ -n "$reason" ] || reason="the agent run failed before producing a result (see workflow logs)"
+      local reason; reason="$(claude_give_up_reason "$RESULT_JSON" resolve_conflict)"
       rm -f "$ctx" "$prompt"
       _give_up "$pr" "$issue" "$reason"
     fi
@@ -132,7 +131,16 @@ main() {
     git -c user.name="smallhours" -c user.email="noreply@smallhours" \
       commit --no-edit -m "smallhours: merge ${base} into ${head} (resolve conflicts, #${pr})" --quiet
   fi
-  git push origin "$head"
+  # An unpushed merge leaves the PR reading DIRTY, so the next sweep tick
+  # re-runs this whole stage against the same rejection, indefinitely.
+  local push_err
+  if ! push_err="$(sh_push origin "$head")"; then
+    _give_up "$pr" "$issue" "the merge of \`${base}\` was completed but the push to \`${head}\` was rejected, so this pull request still conflicts with its base:
+
+\`\`\`
+${push_err}
+\`\`\`"
+  fi
 
   sh_log "resolve-conflict: merged $base into $head on PR #$pr — CI will re-run"
 }

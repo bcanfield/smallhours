@@ -47,11 +47,22 @@ SMALLHOURS_FIXED_LABELS=(ready-for-agent agent-working agent)
 
 # ── Defaults (DESIGN.md) ──────────────────────────────────────────────────────
 _sh_default_model()     { echo "claude-sonnet-5"; }
+# Raised 2026-07-29 from the mediamtx-connect rollout, which spent three days
+# ratcheting these live (implement 50 -> 75 -> 100) through six give-ups. The
+# evidence: implement runs that SUCCEEDED took 52, 73 and 76 turns, and the
+# ones that gave up did so one turn over the cap, not while spinning — the
+# originals were simply set below what real issues cost. auto_fix hit its own
+# cap once at 26/25. A cap is a backstop against a runaway agent, so it should
+# sit above real work rather than through the middle of it; the spend ceiling
+# these were standing in for belongs to attempt_cap and max_concurrent.
+# address_review/resolve_conflict are UNCHANGED — neither has been observed
+# near its cap, and raising them on the strength of implement's evidence would
+# be guessing.
 _sh_default_max_turns() {
   case "$1" in
-    implement)        echo 50 ;;
+    implement)        echo 100 ;;
     address_review)   echo 30 ;;
-    auto_fix)         echo 25 ;;
+    auto_fix)         echo 40 ;;
     resolve_conflict) echo 20 ;;
     *)                echo 30 ;;
   esac

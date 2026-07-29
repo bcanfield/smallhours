@@ -350,6 +350,50 @@ way prints its own remedy; `doctor` flags a missing App install.
 > `ci_workflow` (exact-case, case-mismatch gets its own remedy), and the
 > secrets check notes it proves presence only.
 
+## Production rollout — mediamtx-connect (2026-07-26 → 07-29)
+
+Trickle rollout under a 3-hourly babysitter routine, logged in smallhours#20.
+Twelve queued issues fed one at a time; **nine merged**, two needed a manual
+retry after an unrelated consumer CI fix, one (#209) gave up twice on scope.
+No state-machine defect appeared: every transition the log records — give-up,
+handback, T9, watchdog reclaim, double-label reconciliation — behaved as
+DESIGN specifies. What the rollout found instead was in the seams.
+
+> **FIXED 2026-07-29.** (1) A rejected `git push` fell off `set -e` in all four
+> pushing stages with no comment and no state change, stranding
+> mediamtx-connect#214 in `agent-working` on a dead branch until the watchdog
+> reclaimed it ~70m later (smallhours#24) — the one observed failure that
+> skipped the `ready-for-human` contract entirely. `sh_push` now hands the
+> caller git's rejection text and every stage routes it into its own give-up
+> path (`tests/test-push.sh`). (2) Give-up comments could not name a cause the
+> machine already knew: `.result` is empty on `error_max_turns`, so all six
+> turn-cap exhaustions posted the same "failed before producing a result" and
+> reading a handback meant opening the Actions tab. `claude_give_up_reason`
+> synthesizes from `subtype`/`num_turns` and names the stage's own config knob.
+> (3) Default `max_turns.implement` 50 → 100 and `auto_fix` 25 → 40: the
+> maintainer ratcheted these live through six give-ups, and implement runs that
+> *succeeded* took 52/73/76 turns — the defaults ran through the middle of real
+> work rather than above it. `address_review`/`resolve_conflict` unchanged
+> (never observed near their caps).
+>
+> **Retires debt `give-up-shows-as-red-run`.** Its criterion was "close it if
+> M6 passes without the reds misleading anyone." Six give-up runs painted the
+> loop red across the rollout and the operator classified every one correctly,
+> never as machinery failure. Its second limb — no record survives a give-up —
+> closed separately: the `Upload give-up diagnostics` artifacts keep the result
+> JSON for a week, and the reason and work summary now reach the comment.
+>
+> **Left for the maintainer, registered as debt.** The Fixer App cannot push
+> `.github/workflows/*` (`fixer-app-cannot-push-workflows`) — a grant-vs-declare
+> -unsupported fork that touches ADR 0001, and the reason #214 is still open.
+> The babysitter's own two blind spots are in `babysitter-prompt-not-in-repo`.
+> `sweep-reeval-trusts-workflow-name` had its payoff trigger fire for real and
+> was dodged consumer-side; it stays open. Undecided and not registered: `v1`
+> moves only by hand, and the ~18h between merging the T2 stranding fix and
+> tagging it held a green PR blocked and paused the feed for five straight
+> babysitter runs — a scheduled release-on-green would close that gap without
+> disturbing ADR 0003's "release.yml is the sole mover".
+
 ## Future (out of scope until scheduled)
 
 GitLab port (CI/CD component + webhook→pipeline-trigger bridge + schedules) ·
@@ -363,7 +407,7 @@ issue-comment grilling bot · model auto-escalation · gh-extension packaging
 version: 1
 models:        { implement: claude-sonnet-5, address_review: claude-sonnet-5,
                  auto_fix: claude-sonnet-5, resolve_conflict: claude-sonnet-5 }
-max_turns:     { implement: 50, address_review: 30, auto_fix: 25, resolve_conflict: 20 }
+max_turns:     { implement: 100, address_review: 30, auto_fix: 40, resolve_conflict: 20 }
 attempt_cap: 3
 max_concurrent: 3          # WIP cap: max issues in agent-working at once (ADR 0005)
 ci_workflow: ci            # name the workflow_run gate keys off

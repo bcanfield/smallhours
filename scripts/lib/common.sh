@@ -38,6 +38,37 @@ sh_comment_pr() { # pr-number body
   gh pr comment "$1" --repo "$(sh_repo)" --body "$2"
 }
 
+# Cap the rejection text quoted back into a comment. GitHub's remote messages
+# are a few lines; a pre-receive hook's can be a wall.
+_SH_PUSH_ERR_BYTES=2000
+
+# Push, and on failure hand the caller the reason instead of dying. Returns
+# git's exit status; always mirrors git's stderr into the job log, and on
+# failure ALSO prints the tail on stdout for the caller to quote in its
+# give-up comment.
+#
+# Every stage that pushes must route failure into its own give-up path. A bare
+# `git push` under `set -e` exits with nothing but a `##[error]`: no comment,
+# no state transition, the issue stranded in agent-working on a branch that
+# will never open a PR — which is exactly how mediamtx-connect#214 burned a
+# full implement turn and then an hour of watchdog before anyone learned the
+# App simply lacks `workflows` permission (smallhours#24). A rejection is a
+# diagnosable failure exit, and DESIGN.md says those go in a comment.
+#
+# Our stdout is reserved for the reason alone. Redirection order matters:
+# `>&2` binds git's stdout to the job log FIRST, then `2>"$err"` captures only
+# git's stderr — so `--set-upstream`'s "branch … set up to track" chatter can
+# neither be mistaken for a rejection nor corrupt the quoted text.
+sh_push() { # git-push-args…
+  local err rc=0
+  err="$(mktemp)"
+  git push "$@" >&2 2>"$err" || rc=$?
+  cat "$err" >&2
+  [ "$rc" -eq 0 ] || tail -c "$_SH_PUSH_ERR_BYTES" "$err"
+  rm -f "$err"
+  return "$rc"
+}
+
 # Repo default branch (the PR base, and the branch point for agent work).
 sh_default_branch() {
   gh repo view "$(sh_repo)" --json defaultBranchRef --jq .defaultBranchRef.name

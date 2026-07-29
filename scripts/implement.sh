@@ -12,7 +12,8 @@
 #
 # On a clean run: commits the working tree, pushes the branch, writes the Claude
 # result JSON to $SMALLHOURS_RESULT_JSON for report-usage.sh, prints the branch.
-# On give-up (Claude CLI failure): issue -> ready-for-human + reason, exit 4.
+# On give-up (Claude CLI failure, or a rejected push — the work is committed
+# but unreachable): issue -> ready-for-human + reason, exit 4.
 #
 # Env: GH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN, GITHUB_REPOSITORY. Must run inside a
 # checked-out clone of the consumer repo. Push identity must be the Fixer App
@@ -27,6 +28,18 @@ _dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Kept OUTSIDE the consumer working tree so `git add -A` never commits it.
 RESULT_JSON="${SMALLHOURS_RESULT_JSON:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/smallhours-result.json}"
+
+_give_up() { # issue reason
+  local issue="$1" reason="$2" work
+  work="$(claude_work_summary "${RESULT_JSON}.work")"
+  state_set_issue "$issue" ready-for-human
+  sh_comment_issue "$issue" "🛑 smallhours could not implement this issue and is handing it back.
+
+**Reason:** ${reason}
+
+_${work}_"
+  exit 4
+}
 
 main() {
   [ "$#" -ge 1 ] || sh_die "usage: implement.sh <issue-number> [attempt]"
@@ -74,18 +87,9 @@ main() {
 
   # Run. claude_run returns non-zero on give-up (CLI error or is_error).
   if ! claude_run implement "$prompt" "$RESULT_JSON"; then
-    local reason work; reason="$(claude_result_text "$RESULT_JSON")"
-    [ -n "$reason" ] || reason="the agent run failed before producing a result (see workflow logs)"
-    work="$(claude_work_summary "${RESULT_JSON}.work")"
-    state_set_issue "$issue" ready-for-human
-    sh_comment_issue "$issue" \
-      "🛑 smallhours could not implement this issue and is handing it back.
-
-**Reason:** ${reason}
-
-_${work}_"
+    local reason; reason="$(claude_give_up_reason "$RESULT_JSON" implement)"
     rm -f "$ctx" "$prompt"
-    exit 4
+    _give_up "$issue" "$reason"
   fi
   rm -f "$ctx" "$prompt"
 
@@ -97,8 +101,17 @@ _${work}_"
       commit -m "smallhours: implement #${issue}" --quiet
   fi
 
-  # Push the branch (no-op-safe if nothing changed and it already exists).
-  git push --set-upstream origin "$branch"
+  # Push the branch (no-op-safe if nothing changed and it already exists). A
+  # rejection here is a give-up like any other: the work is committed but
+  # unreachable, and no retry of this branch will ever clear it.
+  local push_err
+  if ! push_err="$(sh_push --set-upstream origin "$branch")"; then
+    _give_up "$issue" "the work was committed but the push to \`${branch}\` was rejected, so nothing reached the remote and no pull request can open:
+
+\`\`\`
+${push_err}
+\`\`\`"
+  fi
 
   sh_log "implement: branch $branch pushed"
   printf '%s\n' "$branch" >&4

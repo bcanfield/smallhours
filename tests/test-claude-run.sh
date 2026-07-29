@@ -105,6 +105,40 @@ case_banner "field accessors still read the documented shape"
   && ok "no result text on a max-turns give-up (why the fallback reason exists)" \
   || bad "result text unexpectedly present"
 
+# The reason that reaches the issue/PR. The whole point is that a give-up with
+# no `.result` must still say something a maintainer can act on WITHOUT opening
+# the Actions tab — six mediamtx-connect handbacks read "failed before
+# producing a result" when the machine knew it was a turn-cap exhaustion.
+case_banner "give-up reason: agent summary when there is one, synthesized when there isn't"
+[ "$(run claude_give_up_reason "$FIX/clean.json" implement)" = "Did the thing." ] \
+  && ok "agent's own summary wins over anything synthesized" || bad "result text not preferred: $(run claude_give_up_reason "$FIX/clean.json" implement)"
+
+r="$(run claude_give_up_reason "$FIX/max-turns.json" implement)"
+case "$r" in *"50 turns"*)     ok "max-turns reason carries the turn count" ;; *) bad "turn count missing: $r" ;; esac
+case "$r" in *"cap 100"*)      ok "max-turns reason carries the configured cap" ;; *) bad "cap missing: $r" ;; esac
+case "$r" in *'`max_turns.implement`'*) ok "names the exact config knob to raise" ;; *) bad "knob not named: $r" ;; esac
+case "$r" in *"workflow logs"*) bad "still punts to the logs when the cause is known" ;; *) ok "does not punt to the job log" ;; esac
+
+# A cap exhaustion in a different stage must name THAT stage's knob and cap,
+# not implement's — the remedy is stage-specific (mediamtx-connect#209 hit
+# auto_fix's cap, not implement's).
+r="$(run claude_give_up_reason "$FIX/max-turns.json" auto_fix)"
+case "$r" in *'`max_turns.auto_fix`'*) ok "knob is per-stage" ;; *) bad "wrong stage knob: $r" ;; esac
+case "$r" in *"cap 40"*)               ok "cap is read per-stage" ;; *) bad "wrong stage cap: $r" ;; esac
+
+# Any other error subtype is still more informative than the bare fallback.
+r="$(run claude_give_up_reason "$FIX/partial.json" implement)"
+case "$r" in *"error_during_execution"*) ok "other subtypes are named verbatim" ;; *) bad "subtype dropped: $r" ;; esac
+
+# No terminal event at all (CLI died before flushing) — nothing to synthesize
+# from, so the original fallback is still the honest answer.
+[ "$(run claude_give_up_reason "$FIX/empty.json" implement)" = "the agent run failed before producing a result (see workflow logs)" ] \
+  && ok "no result JSON -> unchanged fallback" || bad "empty result reason wrong: $(run claude_give_up_reason "$FIX/empty.json" implement)"
+[ "$(run claude_give_up_reason "$FIX/nope.json" implement)" = "the agent run failed before producing a result (see workflow logs)" ] \
+  && ok "missing result file -> unchanged fallback" || bad "missing result reason wrong"
+[ -n "$(run claude_give_up_reason "$FIX/malformed.json" implement)" ] \
+  && ok "malformed result still yields a postable reason" || bad "malformed result produced an empty comment body"
+
 # A representative stream-json event log: system init (ignored), two Bash
 # calls (one repeated verbatim — dedup should collapse it), one Read (not a
 # "touch"), an Edit and a Write, a plain-text assistant turn (no tool_use),
