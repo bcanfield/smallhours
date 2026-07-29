@@ -41,6 +41,29 @@ _${work}_"
   exit 4
 }
 
+# Commit the working tree onto the current branch and push it. Used by BOTH the
+# clean path and the wall-clock give-up (ADR 0007) — a timed-out run is the one
+# give-up whose partial work is worth keeping, because the agent was still
+# making progress when the clock stopped it.
+#   0  branch carries commits and reached the remote
+#   1  nothing to capture (empty working tree, no commits ahead of base)
+#   2  push rejected; git's text is in $_SH_PUSH_ERR
+# Skipping the push at 0-commits keeps empty refs off the remote; open-pr.sh
+# reads the same "no commits" and hands back either way.
+_SH_PUSH_ERR=""
+_capture_work() { # issue branch base
+  local issue="$1" branch="$2" base="$3"
+  git add -A
+  if ! git diff --cached --quiet; then
+    git -c user.name="smallhours" -c user.email="noreply@smallhours" \
+      commit -m "smallhours: implement #${issue}" --quiet
+  fi
+  [ "$(git rev-list --count "origin/${base}..HEAD" 2>/dev/null || echo 0)" -gt 0 ] || return 1
+  _SH_PUSH_ERR=""
+  _SH_PUSH_ERR="$(sh_push --set-upstream origin "$branch")" || return 2
+  return 0
+}
+
 main() {
   [ "$#" -ge 1 ] || sh_die "usage: implement.sh <issue-number> [attempt]"
   local issue="$1" attempt="${2:-}" repo branch base
@@ -89,27 +112,47 @@ main() {
   if ! claude_run implement "$prompt" "$RESULT_JSON"; then
     local reason; reason="$(claude_give_up_reason "$RESULT_JSON" implement)"
     rm -f "$ctx" "$prompt"
+
+    # Wall-clock give-up: keep the partial work as a BRANCH, never a pull
+    # request. A draft PR would trigger consumer CI, and a red CI on an `agent`
+    # PR feeds the auto-fix loop — which would then spend up to attempt_cap
+    # further runs trying to green a half-implemented change. A bare branch is
+    # inert: state-manager finds no PR for it and does nothing (ADR 0007).
+    if [ "$(claude_result_field "$RESULT_JSON" '.subtype')" = "error_timeout" ]; then
+      local cap_rc=0
+      _capture_work "$issue" "$branch" "$base" || cap_rc=$?
+      case "$cap_rc" in
+        0) sh_log "implement: partial work pushed to $branch after wall-clock give-up"
+           reason="${reason}
+
+The partial work is committed on \`${branch}\` — no pull request, because it is unfinished and opening one would start CI and the auto-fix loop on a half-implemented change. Nothing on that branch has been reviewed or tested." ;;
+        1) sh_log "implement: wall-clock give-up with an empty working tree — nothing to push" ;;
+        *) sh_log "implement: wall-clock give-up and the push was rejected too"
+           reason="${reason}
+
+The partial work could not be saved: the push to \`${branch}\` was rejected.
+
+\`\`\`
+${_SH_PUSH_ERR}
+\`\`\`" ;;
+      esac
+    fi
+
     _give_up "$issue" "$reason"
   fi
   rm -f "$ctx" "$prompt"
 
   # Capture whatever the agent produced. It may have committed itself; if not,
-  # commit the working tree so no work is lost. Either way the branch carries it.
-  git add -A
-  if ! git diff --cached --quiet; then
-    git -c user.name="smallhours" -c user.email="noreply@smallhours" \
-      commit -m "smallhours: implement #${issue}" --quiet
-  fi
-
-  # Push the branch (no-op-safe if nothing changed and it already exists). A
-  # rejection here is a give-up like any other: the work is committed but
+  # commit the working tree so no work is lost. Either way the branch carries
+  # it. A rejected push is a give-up like any other: the work is committed but
   # unreachable, and no retry of this branch will ever clear it.
-  local push_err
-  if ! push_err="$(sh_push --set-upstream origin "$branch")"; then
+  local cap_rc=0
+  _capture_work "$issue" "$branch" "$base" || cap_rc=$?
+  if [ "$cap_rc" -eq 2 ]; then
     _give_up "$issue" "the work was committed but the push to \`${branch}\` was rejected, so nothing reached the remote and no pull request can open:
 
 \`\`\`
-${push_err}
+${_SH_PUSH_ERR}
 \`\`\`"
   fi
 
