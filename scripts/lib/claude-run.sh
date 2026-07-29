@@ -14,6 +14,12 @@
 # is_error:true in the result — is a give-up, surfaced as a non-zero return so
 # the caller routes the issue to ready-for-human. This layer NEVER retries.
 #
+# WALL-CLOCK (ADR 0007): exhausting the clock is a give-up like any other, not a
+# job cancellation. The stage runs under `timeout` with a budget computed to
+# expire BELOW the GitHub job cap, so the give-up path, the handback comment and
+# the `if: failure()` diagnostics upload all still run. Cancellation leaves
+# none of them. See claude_run_budget_seconds for the ordered triple.
+#
 # Depends on lib/config.sh (models, max-turns, egress, npm) + lib/common.sh.
 
 [ -n "${_SMALLHOURS_CLAUDE_RUN_SH:-}" ] && return 0
@@ -131,6 +137,73 @@ EOF
   claude_run_install_settings
 }
 
+# ── Wall-clock budget (ADR 0007) ─────────────────────────────────────────────
+# Three numbers form an ORDERED TRIPLE and must move together:
+#
+#   job cap (agent-loop.yml `timeout-minutes`)  >  Claude budget (here)
+#   watchdog (sweep.sh WATCHDOG_MINUTES)        >  job cap + dispatch/queue slack
+#
+# The budget is DERIVED, not a literal, because the term it has to leave room
+# for is the one that varies: claude_run_provision (apt-get, the Claude
+# installer, npm -g sandbox-runtime) can take one minute on a warm runner and
+# several on a cold one. A fixed budget silently spends that variance out of the
+# TAIL — commit, push, open-pr, report-usage — and the tail is exactly what
+# must survive for a timeout to leave anything behind. Subtracting elapsed time
+# makes provisioning overrun eat the agent's time instead.
+#
+# Env (set by the job, next to its own `timeout-minutes:`):
+#   SMALLHOURS_JOB_CAP_MINUTES   the job cap. ABSENT => no timeout at all, so
+#                                implement.sh stays runnable outside Actions
+#                                (the self-hosted portability contract).
+#   SMALLHOURS_JOB_START_EPOCH   stamped by the job's first step. Absent =>
+#                                elapsed counts as 0.
+#   SMALLHOURS_TAIL_SECONDS      reserve for the deterministic tail (default 90).
+# Prints the budget in whole seconds, or nothing when uncapped.
+_SH_MIN_BUDGET_SECONDS=60
+claude_run_budget_seconds() {
+  local cap="${SMALLHOURS_JOB_CAP_MINUTES:-}"
+  [ -n "$cap" ] || return 0
+  case "$cap" in ''|*[!0-9]*) sh_log "claude_run: ignoring non-numeric SMALLHOURS_JOB_CAP_MINUTES=$cap"; return 0 ;; esac
+
+  local start="${SMALLHOURS_JOB_START_EPOCH:-}" tail="${SMALLHOURS_TAIL_SECONDS:-90}" now elapsed budget
+  now="$(date +%s)"
+  case "$start" in ''|*[!0-9]*) elapsed=0 ;; *) elapsed=$(( now - start )); [ "$elapsed" -lt 0 ] && elapsed=0 ;; esac
+
+  # GNU coreutils `timeout` is on every ubuntu-* runner but not on, say, a
+  # macOS or busybox self-hosted host. Degrade to uncapped rather than failing
+  # every single run with an inscrutable exit 127.
+  if ! command -v timeout >/dev/null 2>&1; then
+    sh_log "claude_run: no \`timeout\` on PATH — running without a wall-clock budget"
+    return 0
+  fi
+
+  budget=$(( cap * 60 - elapsed - tail ))
+  # A budget at or below the floor means provisioning already ate the job. Run
+  # anyway, briefly: a short error_timeout give-up with a real handback beats a
+  # cancellation, and the digest says plainly that there was no time to work in.
+  [ "$budget" -lt "$_SH_MIN_BUDGET_SECONDS" ] && budget="$_SH_MIN_BUDGET_SECONDS"
+  printf '%s\n' "$budget"
+}
+
+# Synthesize the terminal result event the CLI never got to emit. `type:"result"`
+# is written only when a run ENDS, so a timed-out run leaves none — and without
+# one, claude_give_up_reason falls into its bare "failed before producing a
+# result" arm, reintroducing verbatim the defect that arm exists to prevent.
+# Same trick claude_run already plays extracting the event out of the stream:
+# give every downstream reader (digest, report-usage, the artifact) a
+# normally-shaped object so none of them needs to know this case exists.
+# `_synthesized` marks it as ours so nobody later mistakes it for CLI output.
+_claude_synthesize_timeout_result() { # stream_jsonl budget_seconds elapsed_ms -> json
+  local stream="$1" budget="$2" elapsed_ms="$3" turns
+  # NB: on an unreadable file jq prints `0` AND exits 2, so `|| echo 0` inside
+  # the substitution would yield "0\n0" and blow up --argjson. Recover outside.
+  turns="$(jq -s '[.[] | select(.type=="assistant")] | length' "$stream" 2>/dev/null)" || turns=0
+  case "$turns" in ''|*[!0-9]*) turns=0 ;; esac
+  jq -nc --argjson turns "$turns" --argjson ms "$elapsed_ms" --argjson budget "$budget" \
+    '{type:"result", subtype:"error_timeout", is_error:true,
+      num_turns:$turns, duration_ms:$ms, budget_seconds:$budget, _synthesized:true}'
+}
+
 # Run one stage. Returns 0 on a clean result, non-zero on give-up.
 #   claude_run <stage> <prompt_file> <out_json>
 # stage ∈ implement | address_review | auto_fix | resolve_conflict
@@ -140,10 +213,11 @@ claude_run() {
   [ -f "$prompt_file" ] || sh_die "claude_run: prompt file not found: $prompt_file"
   [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || sh_die "claude_run: CLAUDE_CODE_OAUTH_TOKEN not set"
 
-  local model max_turns
+  local model max_turns budget
   model="$(config_model "$stage")"
   max_turns="$(config_max_turns "$stage")"
-  sh_log "claude_run: stage=$stage model=$model max_turns=$max_turns"
+  budget="$(claude_run_budget_seconds)"
+  sh_log "claude_run: stage=$stage model=$model max_turns=$max_turns budget=${budget:-none}s"
 
   # stream-json is the only format that emits per-turn tool-use events;
   # --output-format json buffers the whole run into one final object, so what
@@ -156,15 +230,40 @@ claude_run() {
   # unmodified. --verbose is required by the CLI alongside stream-json in
   # --print mode.
   local stream="${out}.stream"
-  local rc=0
-  claude -p \
-    --permission-mode acceptEdits \
-    --model "$model" \
-    --max-turns "$max_turns" \
-    --output-format stream-json --verbose \
-    < "$prompt_file" > "$stream" 2> "$out.stderr" || rc=$?
+  local rc=0 t0 elapsed_ms
+  t0="$(date +%s)"
+  # --kill-after: SIGTERM first so the CLI can flush what it has, SIGKILL 30s
+  # later if it doesn't. Without the budget (uncapped) this is a plain exec.
+  if [ -n "$budget" ]; then
+    timeout --kill-after=30s "${budget}s" \
+    claude -p \
+      --permission-mode acceptEdits \
+      --model "$model" \
+      --max-turns "$max_turns" \
+      --output-format stream-json --verbose \
+      < "$prompt_file" > "$stream" 2> "$out.stderr" || rc=$?
+  else
+    claude -p \
+      --permission-mode acceptEdits \
+      --model "$model" \
+      --max-turns "$max_turns" \
+      --output-format stream-json --verbose \
+      < "$prompt_file" > "$stream" 2> "$out.stderr" || rc=$?
+  fi
+  elapsed_ms=$(( ($(date +%s) - t0) * 1000 ))
 
   jq -c 'select(.type == "result")' "$stream" 2>/dev/null | tail -n1 > "$out"
+
+  # 124 = timeout sent SIGTERM; 137 = it had to escalate to SIGKILL. Either way
+  # the CLI never emitted a terminal event, so stand one in before anything
+  # downstream reads $out.
+  case "$rc" in
+    124|137)
+      if [ ! -s "$out" ]; then
+        _claude_synthesize_timeout_result "$stream" "${budget:-0}" "$elapsed_ms" > "$out"
+        sh_log "claude_run: wall-clock budget (${budget}s) exhausted — synthesized an error_timeout result"
+      fi ;;
+  esac
 
   # Tool-call histogram + files touched + bash commands run: the only
   # surviving evidence of *what the agent did*, derived here and logged on
@@ -218,7 +317,7 @@ claude_result_text()  { claude_result_field "$1" '.result' ; }
 # opening the Actions tab every time. A cap exhaustion is also the one give-up
 # whose remedy is a config edit, not a code fix — so it says which knob.
 claude_give_up_reason() { # out_json stage
-  local out="$1" stage="${2:-}" said subtype turns cap detail
+  local out="$1" stage="${2:-}" said subtype turns cap detail mins
   said="$(claude_result_text "$out")"
   [ -n "$said" ] && { printf '%s' "$said"; return; }
 
@@ -231,6 +330,21 @@ claude_give_up_reason() { # out_json stage
       [ -n "$turns" ] && detail=" (${turns} turns${cap:+, cap ${cap}})"
       printf 'the agent used every turn it was allowed%s and was cut off mid-task — it did not fail on any single step. Raise `max_turns.%s` in `.smallhours.yml`, or split this into smaller pieces of work.' \
         "$detail" "${stage:-<stage>}"
+      ;;
+    # Deliberately names NO knob. Unlike the turn cap, the wall-clock budget is
+    # derived from the job cap and is not consumer-tunable (ADR 0007), so the
+    # only remedy this comment can honestly offer is a smaller ticket — which
+    # is also the remedy the evidence keeps pointing at.
+    error_timeout)
+      mins="$(claude_result_field "$out" '.duration_ms')"
+      case "$mins" in
+        ''|*[!0-9]*) mins="" ;;
+        *) mins=$(( mins / 60000 )); [ "$mins" -ge 1 ] && mins=" in ${mins}m" || mins="" ;;
+      esac
+      detail=""
+      [ -n "$turns" ] && detail=" after ${turns} turns${mins}"
+      printf 'the agent ran out of wall-clock time%s and was cut off mid-task — it did not fail on any single step, and it was still working when the clock ran out. There is no per-repo timeout setting: this issue is too large to finish in one run. Split it into smaller pieces of work.' \
+        "$detail"
       ;;
     '')
       printf 'the agent run failed before producing a result (see workflow logs)'
