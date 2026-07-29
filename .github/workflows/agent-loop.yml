@@ -287,17 +287,33 @@ jobs:
           fi
 
   # ── T1 body: implement on agent/issue-N, deterministic draft PR, usage ─────
+  # WALL-CLOCK, an ORDERED TRIPLE — change one, check the others (ADR 0007):
+  #   SMALLHOURS_JOB_CAP_MINUTES  ==  this job's timeout-minutes (60)
+  #   the Claude budget           <   the cap  (derived in claude_run_budget_seconds)
+  #   sweep.sh WATCHDOG_MINUTES   >   the cap + dispatch/queue slack  (80)
+  # implement is the ONLY stage the watchdog can reach — every other stage runs
+  # on an issue that already has an open agent PR, which fails its predicate —
+  # so it is also the only cap raised past 40.
   implement:
     needs: implement_guard
     if: needs.implement_guard.outputs.go == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
+    env:
+      SMALLHOURS_JOB_CAP_MINUTES: 60
     permissions:
       contents: read
     concurrency:
       group: smallhours-issue-${{ github.event.issue.number }}
       cancel-in-progress: false
     steps:
+      # Stamp the job's own start FIRST, so everything after it — notably
+      # sandbox provisioning, whose cost swings with runner warmth — is charged
+      # against the agent's derived budget rather than silently against the
+      # tail (commit, push, open-pr, report-usage) that has to survive a
+      # timeout for the run to leave anything behind.
+      - name: Stamp job start
+        run: echo "SMALLHOURS_JOB_START_EPOCH=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/create-github-app-token@v1
         id: token
         with:
@@ -351,6 +367,33 @@ jobs:
           path: ${{ runner.temp }}/smallhours-result.json*
           if-no-files-found: ignore
           retention-days: 7
+      # A cancelled job runs NEITHER the give-up path nor the step above, so
+      # without this the issue sits in `agent-working` until the sweep watchdog
+      # reclaims it — WATCHDOG_MINUTES plus GitHub's scheduler lag (observed at
+      # up to ~65m against a */15 cron), holding a max_concurrent slot the
+      # whole time. The derived budget is what should make a job-cap
+      # cancellation unreachable; this is the backstop for when it isn't.
+      # It also fires when a HUMAN cancels the run from the Actions tab, which
+      # likewise hands the issue back — deliberate, not incidental (ADR 0007).
+      - name: Hand the issue back if the job was cancelled
+        if: cancelled()
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          set -uo pipefail
+          T=.smallhours-toolkit/scripts
+          # Cancelled before the toolkit was checked out: nothing to run with.
+          # The watchdog remains the backstop for that window.
+          [ -f "$T/lib/state.sh" ] || { echo "toolkit not checked out yet — leaving the issue to the watchdog"; exit 0; }
+          . "$T/lib/common.sh"
+          . "$T/lib/state.sh"
+          issue="${{ github.event.issue.number }}"
+          state_set_issue "$issue" ready-for-human
+          # printf, not a literal multi-line string: an unindented continuation
+          # line would close this YAML block scalar early.
+          sh_comment_issue "$issue" "$(printf '%s\n\n%s' \
+            "🛑 The implement run for this issue was **cancelled** before it could finish or hand itself back, so there is no result to report. smallhours released the slot and marked this \`$(label_for ready-for-human)\`." \
+            "Relabel \`$(label_for ready-for-agent)\` to retry.")"
 
   # ── Cancellation: T10 (issue closed mid-run) / T11 (a HUMAN removed the state)
   # The sender.type == 'User' guard is essential: the App removes `agent-working`
