@@ -300,7 +300,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
-      SMALLHOURS_JOB_CAP_MINUTES: 60
+      # CANARY BRANCH — DO NOT MERGE. The two numbers are deliberately
+      # decoupled: the JOB still gets its full 60 minutes (so it is never
+      # cancelled and the give-up path, handback and diagnostics upload all
+      # run), while claude_run derives its budget from a fake 8-minute cap and
+      # so times out after roughly 8 - provisioning - 90s ≈ 3-4 minutes of
+      # agent time. That is the only way to exercise a REAL SIGTERM'd Claude
+      # end to end without paying for a real 50-minute timeout.
+      SMALLHOURS_JOB_CAP_MINUTES: 8
     permissions:
       contents: read
     concurrency:
