@@ -81,6 +81,13 @@ participates manually.
 **Agent** — Claude Code running unattended (GitHub Actions in v1), implementing
 a `ready-for-agent` issue through to a reviewable PR.
 
+**Give-up** — How the system quits a stage it cannot finish: it states a reason
+the machine already knows, moves the issue to `ready-for-human`, and keeps the
+run's diagnostics. Never a retry. Causes include the agent stopping on a
+blocker, exhausting its turns, exhausting its wall-clock time, and a rejected
+push. A give-up is the *only* sanctioned way for a stage to end without a
+reviewable PR — a run that merely dies leaves the issue for the watchdog.
+
 **Fixer App** — The maintainer-owned GitHub App that is the identity every
 automation action runs under. One per maintainer, never hosted centrally, so
 the audit trail always distinguishes machine actions from human ones.

@@ -394,6 +394,39 @@ DESIGN specifies. What the rollout found instead was in the seams.
 > babysitter runs — a scheduled release-on-green would close that gap without
 > disturbing ADR 0003's "release.yml is the sole mover".
 
+> **FIXED 2026-07-29 (wall-clock).** Two implement runs (mediamtx-connect
+> #175, #177) were *cancelled* at the 40m job cap, and cancellation is the one
+> exit that runs neither the give-up path nor `if: failure()`: no comment, no
+> state change, no diagnostics, no branch — ~80m of Opus for nothing, with two
+> `max_concurrent` slots held past the sweep's next tick. **ADR 0007** makes
+> wall-clock exhaustion a give-up cause instead: the stage runs under `timeout`
+> with a budget derived as `cap − elapsed − tail` (so provisioning overrun eats
+> the agent's time, not the tail), `claude_run` synthesizes the
+> `error_timeout` terminal event the CLI never emits, the handback names the
+> cause and prescribes a smaller ticket (there is no consumer knob, by
+> decision), and the partial work is pushed as a **branch with no PR** — a PR
+> would feed auto-fix a half-implemented change. Implement's cap rises 40 → 60
+> **alone**; watchdog 60 → 80 to stay above it; an `if: cancelled()` step
+> reclaims the slot for the residual window. New debt:
+> `orphaned-agent-branches`, `human-cancel-hands-issue-back`;
+> `watchdog-threshold-not-in-config` amended, not closed — its trigger fired in
+> condition but not rationale, and the ordering invariant it now carries is
+> unenforced by design.
+>
+> **Diagnosis, not just repair.** The runs were *not* turn-capped — `max_turns`
+> was never the binding constraint here. Two independent causes: (1) **sizing** —
+> issue bodies split cleanly at 672 → 1315 chars between everything that has
+> shipped on that repo and everything that stalled, and every stalled *title*
+> enumerates multiple deliverables while every shipped one names a single one;
+> (2) **undeclared dependencies** — #177 names its prerequisites under
+> `## Dependencies` in prose with no issue numbers, so `edges_blocked_by_refs`
+> (which reads `## Blocked by`) saw nothing, `edges_promotable` called it
+> trivially promotable, and it was dispatched with its entire substrate
+> missing. It is *smaller* than #178, which was parked as too big. Fix is
+> upstream in `/to-tickets`, not in `edges.sh` — a parser pointed at those
+> sections would find no refs to normalize. Consumer-side follow-up (re-cut
+> #175, edge #177, convert the other five tickets) is tracked on that repo.
+
 ## Future (out of scope until scheduled)
 
 GitLab port (CI/CD component + webhook→pipeline-trigger bridge + schedules) ·

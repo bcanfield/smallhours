@@ -15,8 +15,19 @@
 #              PRs, e.g. after a required-approval unblocked a green revision).
 #
 # Watchdog: an `agent-working` issue with no open agent PR after
-# SMALLHOURS_WATCHDOG_MINUTES (default 60 — DESIGN "~1h"; the implement job
-# times out at 40m, so a live run can never trip this) -> ready-for-human.
+# SMALLHOURS_WATCHDOG_MINUTES (default 80) -> ready-for-human.
+#
+# 80 is NOT free-standing — it is the top of the ordered triple in ADR 0007 and
+# must stay above the implement job cap (agent-loop.yml `timeout-minutes: 60`)
+# plus dispatch and runner-queue slack. Raise that cap and this MUST move with
+# it, or the watchdog reclaims issues out from under live runs: the sweep marks
+# ready-for-human, then the run finishes and opens a draft PR anyway, leaving
+# two owners for one issue. implement is the only stage it can reach — every
+# other stage works on an issue that already has an open agent PR, which fails
+# this predicate. Note the effective reclaim latency is this threshold PLUS
+# GitHub's scheduler lag, observed up to ~65m against a */15 cron; the
+# `if: cancelled()` handback in the implement job is what keeps the common case
+# off this path.
 #
 # Label reconciliation: an open issue carrying more than one state label is
 # healed toward its PR reality (lib/sweep.sh sweep_reconcile_target) + comment.
@@ -31,7 +42,7 @@ _dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_dir/lib/state.sh"
 . "$_dir/lib/sweep.sh"
 
-WATCHDOG_MINUTES="${SMALLHOURS_WATCHDOG_MINUTES:-60}"
+WATCHDOG_MINUTES="${SMALLHOURS_WATCHDOG_MINUTES:-80}"
 
 main() {
   sh_require_auth

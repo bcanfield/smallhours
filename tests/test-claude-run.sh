@@ -217,6 +217,78 @@ printf '{}\n' > "$FIX/no-tools.work"
 [ "$(run claude_work_summary "$FIX/no-tools.work")" = "tools: none · files touched: 0 · bash commands: 0" ] \
   && ok "digest with no tool calls reads as none/0, not blank" || bad "no-tools summary wrong: $(run claude_work_summary "$FIX/no-tools.work")"
 
+# ── Wall-clock budget + the timeout give-up (ADR 0007) ───────────────────────
+# The budget is DERIVED (cap - elapsed - tail) so that provisioning overrun
+# eats the agent's time instead of the tail that has to survive a timeout.
+# These cases pin the derivation, because getting it wrong is invisible until
+# a real run is cancelled and leaves nothing behind — the exact failure the
+# whole mechanism exists to prevent.
+case_banner "wall-clock budget derivation"
+# The budget is only meaningful where GNU `timeout` exists, and it deliberately
+# degrades to uncapped where it doesn't. Neither branch may depend on whatever
+# the HOST happens to have, so both are driven from a controlled PATH: a stub
+# `timeout` for the derivation cases, an empty bin for the fallback case.
+mkdir -p "$FIX/withtimeout" "$FIX/notimeout"
+printf '#!/bin/sh\nexit 0\n' > "$FIX/withtimeout/timeout"; chmod +x "$FIX/withtimeout/timeout"
+budget() { # cap start tail
+  ( export SMALLHOURS_JOB_CAP_MINUTES="$1" SMALLHOURS_JOB_START_EPOCH="$2" SMALLHOURS_TAIL_SECONDS="$3"
+    export PATH="$FIX/withtimeout:$PATH"
+    run claude_run_budget_seconds )
+}
+now="$(date +%s)"
+# The function reads its own `date`, so a second can tick between $now and the
+# call. Assert within 2s rather than writing a test that fails 1 run in 60.
+near() { # description want got tolerance
+  local d=$(( $3 - $2 )); [ "$d" -lt 0 ] && d=$(( -d ))
+  if [ "$d" -le "$4" ]; then ok "$1"; else bad "$1 (want ~$2, got $3)"; fi
+}
+[ -z "$(budget "" "" "")" ] && ok "no cap -> no timeout (standalone/self-hosted stays runnable)" || bad "uncapped run produced a budget"
+near "fresh job: cap*60 - 0 elapsed - tail" 3510 "$(budget 60 "$now" 90)" 2
+near "5m of provisioning comes out of the agent's time, not the tail" 3210 "$(budget 60 "$((now - 300))" 90)" 2
+[ "$(budget 60 "$((now - 3600))" 90)" = "60" ] \
+  && ok "provisioning ate the job -> floor, so a short give-up still beats a cancellation" || bad "floor wrong: $(budget 60 "$((now - 3600))" 90)"
+near "clock skew (start in the future) reads as 0 elapsed, never a bonus" 3510 "$(budget 60 "$((now + 600))" 90)" 2
+[ -z "$(budget "not-a-number" "$now" 90)" ] && ok "non-numeric cap -> uncapped, not a crash" || bad "bad cap did not degrade"
+near "unparseable start -> 0 elapsed" 3510 "$(budget 60 "garbage" 90)" 2
+# A host without GNU coreutils (macOS, busybox self-hosted) must run UNCAPPED,
+# not fail every stage with an inscrutable exit 127 from a missing binary.
+no_timeout_budget="$( export SMALLHOURS_JOB_CAP_MINUTES=60 SMALLHOURS_JOB_START_EPOCH="$now" SMALLHOURS_TAIL_SECONDS=90
+                      export PATH="$FIX/notimeout"; run claude_run_budget_seconds 2>/dev/null )"
+[ -z "$no_timeout_budget" ] && ok "no \`timeout\` on PATH -> uncapped, never a hard failure" || bad "missing timeout still produced a budget: $no_timeout_budget"
+
+# A real SIGTERM'd run leaves a stream with no terminal event. Two assistant
+# turns stand in for "it was working when the clock stopped it".
+printf '%s\n%s\n' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"a.ts","old_string":"a","new_string":"b"}}]}}' \
+  '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"pnpm test"}}]}}' \
+  > "$FIX/truncated-stream.jsonl"
+
+case_banner "synthesized terminal result for a run the CLI never got to end"
+s="$(run _claude_synthesize_timeout_result "$FIX/truncated-stream.jsonl" 3510 3510000)"
+[ "$(jq -r .subtype <<< "$s")"     = "error_timeout" ] && ok "subtype is error_timeout"  || bad "subtype wrong: $s"
+[ "$(jq -r .is_error <<< "$s")"    = "true" ]          && ok "is_error true (a give-up)" || bad "is_error wrong: $s"
+[ "$(jq -r .type <<< "$s")"        = "result" ]        && ok "shaped like a real terminal event" || bad "type wrong: $s"
+[ "$(jq -r .num_turns <<< "$s")"   = "2" ]             && ok "turns recovered from the truncated stream" || bad "num_turns wrong: $s"
+[ "$(jq -r ._synthesized <<< "$s")" = "true" ]         && ok "marked synthesized (never mistaken for CLI output)" || bad "not marked: $s"
+[ -n "$(run claude_result_digest <(printf '%s\n' "$s"))" ] && ok "digests like any other result" || bad "digest could not read it"
+s="$(run _claude_synthesize_timeout_result "$FIX/nope.jsonl" 3510 3510000)"
+[ "$(jq -r .num_turns <<< "$s")" = "0" ] && ok "missing stream -> 0 turns, still a valid result" || bad "missing stream broke synthesis: $s"
+
+# The whole point of synthesizing: without it this falls into the bare
+# "failed before producing a result" arm — verbatim the defect that arm was
+# written to eliminate, reintroduced under a new subtype.
+cat > "$FIX/timeout.json" <<'EOF'
+{"type":"result","subtype":"error_timeout","is_error":true,
+ "num_turns":58,"duration_ms":3510000,"budget_seconds":3510,"_synthesized":true}
+EOF
+case_banner "give-up reason for a wall-clock exhaustion"
+r="$(run claude_give_up_reason "$FIX/timeout.json" implement)"
+case "$r" in *"58 turns"*)       ok "carries the turn count (thrashing vs grinding)" ;; *) bad "turn count missing: $r" ;; esac
+case "$r" in *"58m"*)            ok "carries the elapsed minutes" ;; *) bad "duration missing: $r" ;; esac
+case "$r" in *"Split it"*)       ok "prescribes the only remedy there is" ;; *) bad "no remedy given: $r" ;; esac
+case "$r" in *'max_turns'*|*'.smallhours.yml'*) bad "names a knob that cannot fix a timeout: $r" ;; *) ok "names no config knob (the budget is not consumer-tunable)" ;; esac
+case "$r" in *"workflow logs"*)  bad "punts to the logs when the cause is known: $r" ;; *) ok "does not punt to the job log" ;; esac
+
 echo
 echo "test-claude-run: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
