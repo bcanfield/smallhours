@@ -207,6 +207,41 @@ claude_num_turns()    { claude_result_field "$1" '.num_turns' ; }
 claude_duration_ms()  { claude_result_field "$1" '.duration_ms' ; }
 claude_result_text()  { claude_result_field "$1" '.result' ; }
 
+# The give-up reason a stage posts to the issue/PR. Prefers the agent's own
+# summary (`.result`); falls back to one synthesized from the terminal event's
+# machine-known fields rather than to a bare "see workflow logs".
+#
+# Not cosmetic. `.result` is empty on an error_max_turns give-up, so all six
+# turn-cap exhaustions of the mediamtx-connect rollout posted the identical
+# "failed before producing a result" string; the actual cause existed only in
+# claude_result_digest's job-log line, and reading a handback comment meant
+# opening the Actions tab every time. A cap exhaustion is also the one give-up
+# whose remedy is a config edit, not a code fix — so it says which knob.
+claude_give_up_reason() { # out_json stage
+  local out="$1" stage="${2:-}" said subtype turns cap detail
+  said="$(claude_result_text "$out")"
+  [ -n "$said" ] && { printf '%s' "$said"; return; }
+
+  subtype="$(claude_result_field "$out" '.subtype')"
+  turns="$(claude_num_turns "$out")"
+  case "$subtype" in
+    error_max_turns)
+      [ -n "$stage" ] && cap="$(config_max_turns "$stage")"
+      detail=""
+      [ -n "$turns" ] && detail=" (${turns} turns${cap:+, cap ${cap}})"
+      printf 'the agent used every turn it was allowed%s and was cut off mid-task — it did not fail on any single step. Raise `max_turns.%s` in `.smallhours.yml`, or split this into smaller pieces of work.' \
+        "$detail" "${stage:-<stage>}"
+      ;;
+    '')
+      printf 'the agent run failed before producing a result (see workflow logs)'
+      ;;
+    *)
+      printf 'the agent run ended in `%s`%s without producing a result (see workflow logs)' \
+        "$subtype" "${turns:+ after ${turns} turns}"
+      ;;
+  esac
+}
+
 # One-line diagnostic digest for the job log. Deliberately excludes `.result`
 # (the agent's own summary): that can be long, and the give-up path already
 # posts it to the issue. Null fields are dropped, since an aborted run may

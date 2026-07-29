@@ -21,6 +21,18 @@ RESULT_JSON="${SMALLHOURS_RESULT_JSON:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/smallhour
 # Case-insensitive equality for the review-state token.
 _eq_ci() { [ "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" = "$2" ]; }
 
+_give_up() { # pr issue reason
+  local pr="$1" issue="$2" reason="$3" work
+  work="$(claude_work_summary "${RESULT_JSON}.work")"
+  [ -n "$issue" ] && state_set_issue "$issue" ready-for-human
+  sh_comment_pr "$pr" "🛑 smallhours could not address the requested changes.
+
+**Reason:** ${reason}
+
+_${work}_"
+  exit 4
+}
+
 main() {
   [ "$#" -eq 3 ] || sh_die "usage: address-review.sh <pr-number> <review-state> <reviewer-login>"
   local pr="$1" rstate="$2" reviewer="$3" repo perm head issue
@@ -74,17 +86,9 @@ main() {
   sh_render_prompt "$_dir/../prompts/address-review.md" "$ctx" "$prompt"
 
   if ! claude_run address_review "$prompt" "$RESULT_JSON"; then
-    local reason work; reason="$(claude_result_text "$RESULT_JSON")"
-    [ -n "$reason" ] || reason="the agent run failed before producing a result (see workflow logs)"
-    work="$(claude_work_summary "${RESULT_JSON}.work")"
-    [ -n "$issue" ] && state_set_issue "$issue" ready-for-human
-    sh_comment_pr "$pr" "🛑 smallhours could not address the requested changes.
-
-**Reason:** ${reason}
-
-_${work}_"
+    local reason; reason="$(claude_give_up_reason "$RESULT_JSON" address_review)"
     rm -f "$ctx" "$prompt"
-    exit 4
+    _give_up "$pr" "$issue" "$reason"
   fi
   rm -f "$ctx" "$prompt"
 
@@ -93,7 +97,16 @@ _${work}_"
     git -c user.name="smallhours" -c user.email="noreply@smallhours" \
       commit -m "smallhours: address review on #${pr}" --quiet
   fi
-  git push origin "$head"
+  # A rejected push leaves the PR sitting in draft with the revisions committed
+  # only on the runner — CI never re-fires and the reviewer sees nothing.
+  local push_err
+  if ! push_err="$(sh_push origin "$head")"; then
+    _give_up "$pr" "$issue" "the revisions were committed but the push to \`${head}\` was rejected, so this pull request still shows the old code:
+
+\`\`\`
+${push_err}
+\`\`\`"
+  fi
 
   sh_log "address-review: pushed revisions to $head"
 }
