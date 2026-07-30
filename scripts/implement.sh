@@ -113,21 +113,29 @@ main() {
     local reason; reason="$(claude_give_up_reason "$RESULT_JSON" implement)"
     rm -f "$ctx" "$prompt"
 
-    # Wall-clock give-up: keep the partial work as a BRANCH, never a pull
-    # request. A draft PR would trigger consumer CI, and a red CI on an `agent`
-    # PR feeds the auto-fix loop — which would then spend up to attempt_cap
-    # further runs trying to green a half-implemented change. A bare branch is
-    # inert: state-manager finds no PR for it and does nothing (ADR 0007).
-    if [ "$(claude_result_field "$RESULT_JSON" '.subtype')" = "error_timeout" ]; then
+    # CUT OFF WHILE STILL PROGRESSING — keep the partial work as a BRANCH,
+    # never a pull request. A draft PR would trigger consumer CI, and a red CI
+    # on an `agent` PR feeds the auto-fix loop, which would then spend up to
+    # attempt_cap further runs trying to green a half-implemented change. A
+    # bare branch is inert: state-manager finds no PR for it and does nothing.
+    #
+    # BOTH allowance give-ups qualify, not just the clock (ADR 0007, amended).
+    # mediamtx-connect#291 proved the distinction was worthless: it gave up at
+    # 101 turns against a cap of 100, ~one turn from finishing, and $6.20 of a
+    # complete vertical slice (15 files: contract + API + web + tests + e2e +
+    # i18n) died with the runner because this test named only error_timeout.
+    # Every other give-up falls through harmlessly — a run that stopped
+    # deliberately has an empty tree, and _capture_work returns 1.
+    if [ "$(claude_was_cut_off "$RESULT_JSON")" = "true" ]; then
       local cap_rc=0
       _capture_work "$issue" "$branch" "$base" || cap_rc=$?
       case "$cap_rc" in
-        0) sh_log "implement: partial work pushed to $branch after wall-clock give-up"
+        0) sh_log "implement: partial work pushed to $branch after being cut off mid-task"
            reason="${reason}
 
 The partial work is committed on \`${branch}\` — no pull request, because it is unfinished and opening one would start CI and the auto-fix loop on a half-implemented change. Nothing on that branch has been reviewed or tested." ;;
-        1) sh_log "implement: wall-clock give-up with an empty working tree — nothing to push" ;;
-        *) sh_log "implement: wall-clock give-up and the push was rejected too"
+        1) sh_log "implement: cut off mid-task with an empty working tree — nothing to push" ;;
+        *) sh_log "implement: cut off mid-task and the push was rejected too"
            reason="${reason}
 
 The partial work could not be saved: the push to \`${branch}\` was rejected.
