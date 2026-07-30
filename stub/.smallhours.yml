@@ -51,4 +51,51 @@ egress_extra_domains: []
 # When true, the sandbox reaches registry.npmjs.org AND install lifecycle
 # scripts are disabled (NPM_CONFIG_IGNORE_SCRIPTS=true). When false (default),
 # npm has no network egress.
+#
+# Egress alone is not enough to INSTALL anything: the sandbox permits writes to
+# the working directory and $TMPDIR only, and a package store lives outside both.
+# Pair this with sandbox.filesystem.allowWrite below, or resolution will succeed
+# and the store write will be denied.
 npm_allowed: false
+
+# Widen the sandbox Claude Code runs your agent under. Every key here is a LIST
+# and is APPENDED to the toolkit's hardened profile — you can add paths, domains
+# and commands, but you cannot turn a protection off. `enabled`,
+# `failIfUnavailable`, `allowUnsandboxedCommands`, `allowManagedDomainsOnly`,
+# `filesystem.disabled`, `enableWeakerNestedSandbox` and the Unix-socket keys
+# belong to the toolkit; setting one here logs a warning and is ignored.
+#
+# Settable keys: filesystem.allowWrite, filesystem.allowRead,
+# filesystem.denyWrite, filesystem.denyRead, excludedCommands,
+# credentials.files, credentials.envVars, network.allowedDomains.
+# Full reference: https://code.claude.com/docs/en/settings#sandbox-settings
+#
+# The usual reason to set this is a package manager's store, which lives outside
+# the working directory. Paths are ecosystem-specific, so the toolkit does not
+# guess them — e.g. pnpm/npm:
+#   sandbox:
+#     filesystem:
+#       allowWrite: ["~/.local/share/pnpm", "~/.npm", "~/.cache"]
+# and for a tool that cannot run sandboxed at all:
+#     excludedCommands: ["docker *"]
+sandbox: {}
+
+# The VERIFY GATE: run after the agent finishes and before the pull request
+# opens. Any shell command; the toolkit only reads its exit status. On failure it
+# re-enters the agent with the output (see verify_reentries) so a lint or type
+# error costs seconds here instead of a full CI round trip plus one of your
+# attempt_cap auto-fix attempts.
+#
+# It can never stall an issue: a gate still failing after its re-entries pushes
+# anyway and says so on the PR, leaving CI exactly the backstop it already was.
+# Unset (default) means no gate — the behaviour before this key existed.
+#
+# The agent must be able to RUN this, which for most repos means it has to
+# install dependencies first. Tell it so in AGENTS.md / CLAUDE.md.
+# verify: pnpm verify
+
+# How many times a red gate re-enters the agent before the branch is pushed
+# regardless. Distinct from attempt_cap, which counts CI auto-fix attempts across
+# jobs; this counts re-entries inside one. 0 runs the gate but never re-enters.
+# Default: 2.
+verify_reentries: 2

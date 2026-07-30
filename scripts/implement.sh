@@ -23,6 +23,7 @@ _dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$_dir/lib/common.sh"
 . "$_dir/lib/state.sh"
 . "$_dir/lib/claude-run.sh"
+. "$_dir/lib/verify.sh"
 . "$_dir/lib/tracker-context.sh"
 . "$_dir/lib/sweep.sh"
 
@@ -141,6 +142,15 @@ ${_SH_PUSH_ERR}
     _give_up "$issue" "$reason"
   fi
   rm -f "$ctx" "$prompt"
+
+  # Between the agent phase and the commit, so a re-entry's fix lands in the same
+  # push rather than trailing it. Never fails the run (lib/verify.sh).
+  verify_gate "$RESULT_JSON"
+  local vreport; vreport="$(sh_verify_report_path)"
+  # Clear unconditionally: a stale report from an earlier run in the same
+  # RUNNER_TEMP would otherwise put a red-gate warning on a clean PR.
+  rm -f "$vreport"
+  [ -n "$SH_VERIFY_FAILED" ] && printf '%s\n' "$SH_VERIFY_FAILED" > "$vreport"
 
   # Capture whatever the agent produced. It may have committed itself; if not,
   # commit the working tree so no work is lost. Either way the branch carries

@@ -54,12 +54,35 @@ main() {
     state_pr_add_label "$pr" agent
   else
     local title; title="$(gh issue view "$issue" --repo "$repo" --json title --jq .title)"
+    # A verify gate that stayed red after its re-entries still gets pushed, so
+    # say so on the PR. Silently shipping a known-red branch is worse than
+    # having no gate — the reviewer would have no way to tell this apart from a
+    # branch nobody checked.
+    local gate="" vreport; vreport="$(sh_verify_report_path)"
+    if [ -s "$vreport" ]; then
+      gate="
+
+---
+
+⚠️ **The verify gate was still failing when this branch was pushed.** smallhours
+re-entered the agent to repair it and the command did not go green, so CI is the
+next thing that will see it.
+
+<details><summary>Last output from the verify command</summary>
+
+\`\`\`
+$(cat "$vreport")
+\`\`\`
+
+</details>"
+      sh_log "open-pr: PR body carries a red verify-gate report"
+    fi
     pr="$(gh pr create --repo "$repo" \
       --draft --head "$branch" --base "$base" \
       --title "$title" \
       --body "Closes #${issue}
 
-_Opened by smallhours. This PR is automation-owned (\`agent\`) and stays a draft until CI is green._" \
+_Opened by smallhours. This PR is automation-owned (\`agent\`) and stays a draft until CI is green._${gate}" \
       --label "$(label_for agent)" \
       | grep -oE '[0-9]+$' | tail -1)"
     sh_log "open-pr: created draft PR #$pr for $branch"
