@@ -21,6 +21,15 @@ Rules:
   tests/linters to check your work. When the issue or its parent spec names
   seams, interfaces, or acceptance criteria, work test-first at those seams:
   write the failing test, then make it pass.
+- Nothing is installed for you. If this repo has dependencies, install them
+  first — its own AGENTS.md / CLAUDE.md says how — so you can actually run its
+  checks. If an install or a check fails because a network host or a write
+  outside the working directory was blocked, name what was blocked in your final
+  summary: that is a gap in the repo's `.smallhours.yml`, not something to work
+  around.
+- Your work may be checked by a verify command after you stop, and you will be
+  asked to fix it if it fails. Running that check yourself first is faster than
+  waiting to be asked.
 - Before you stop, self-review your diff against every acceptance criterion in
   the issue (and its parent spec, when inlined below). State in your final
   summary which criteria are met; if any are not, say so plainly instead of

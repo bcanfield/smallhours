@@ -74,6 +74,15 @@ sh_default_branch() {
   gh repo view "$(sh_repo)" --json defaultBranchRef --jq .defaultBranchRef.name
 }
 
+# Where implement.sh leaves a still-red verify gate's output for open-pr.sh to
+# quote in the PR body. A file rather than an argument because the two scripts
+# are separate processes in the workflow step, and OUTSIDE the worktree so
+# `git add -A` can never commit it. Absent = the gate passed, or none was
+# configured; open-pr.sh must treat those the same way.
+sh_verify_report_path() {
+  printf '%s\n' "${SMALLHOURS_VERIFY_REPORT:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/smallhours-verify-failed.txt}"
+}
+
 # Splice a context file into a prompt template at a lone `{{CONTEXT}}` line.
 # Verbatim copy — no sed/eval — so arbitrary issue text can never be
 # interpreted as shell or regex.
