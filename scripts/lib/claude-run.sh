@@ -306,6 +306,24 @@ claude_num_turns()    { claude_result_field "$1" '.num_turns' ; }
 claude_duration_ms()  { claude_result_field "$1" '.duration_ms' ; }
 claude_result_text()  { claude_result_field "$1" '.result' ; }
 
+# Was this give-up an ALLOWANCE exhaustion — the agent cut off while it was
+# still making progress — rather than a stop? Prints "true"/"false".
+#
+# The two allowances differ only in what they meter. Their give-up reasons say
+# so in identical words ("cut off mid-task — it did not fail on any single
+# step"), and which one bites is a property of the WORK, not the ticket: fast
+# exploratory turns exhaust the turn cap first (mediamtx-connect#291 — 101
+# turns in 18 minutes), slow heavy turns exhaust the clock first (#175, #177 —
+# 40 minutes without reaching the turn cap). Callers that preserve partial work
+# must treat them the same or they preserve it in only one of the two regimes,
+# which is how #291 lost a complete vertical slice.
+claude_was_cut_off() { # out_json
+  case "$(claude_result_field "$1" '.subtype')" in
+    error_timeout|error_max_turns) echo true ;;
+    *)                             echo false ;;
+  esac
+}
+
 # The give-up reason a stage posts to the issue/PR. Prefers the agent's own
 # summary (`.result`); falls back to one synthesized from the terminal event's
 # machine-known fields rather than to a bare "see workflow logs".

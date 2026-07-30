@@ -62,9 +62,10 @@ new state label, no new vocabulary, no change to the state machine.
    is `max_turns.<stage>`, a timeout has no consumer-tunable setting by
    decision (1). The only honest remedy is a smaller ticket, so that is what the
    handback says.
-5. **A timed-out run pushes its branch, never a pull request.** The comment
-   names the branch. `state-manager` finds no PR for it and does nothing, so
-   the auto-fix loop is never entered.
+5. **A run cut off mid-task pushes its branch, never a pull request.** The
+   comment names the branch. `state-manager` finds no PR for it and does
+   nothing, so the auto-fix loop is never entered. *(Amended — see below. This
+   originally read "a timed-out run", which was too narrow.)*
 6. **The implement job hands the issue back on `cancelled()`**, covering the
    residual window where cancellation still happens (and a human cancelling
    from the Actions tab, which likewise hands back — deliberate).
@@ -132,6 +133,39 @@ files and by this ADR.
   the only option that recovers the *spent* time rather than the artifact, but
   it changes the attempt/branch model (`sweep_next_attempt`) and is unjustified
   until there is evidence that properly-sized tickets still exceed the cap.
+
+## Amendment 2026-07-30 — preservation covers both allowances, not just the clock
+
+Decision 5 originally preserved partial work only on `error_timeout`. The first
+run after release proved that wrong at a cost of $6.20.
+
+mediamtx-connect#291 — the *smallest* ticket of the #175 re-cut, a read-only
+catalog page — gave up at **101 turns against a cap of 100, in 18 minutes**. It
+was not thrashing: the tool digest shows codebase archaeology followed by a
+complete vertical slice (contract, API router + test, page + test, routes, nav,
+`FEATURES.md`, two e2e specs, i18n), with its final turns spent on `git diff`
+self-review. It ran out of allowance roughly one turn from finishing, and
+because the preservation test named only `error_timeout`, fifteen files of
+finished work died with the runner — the exact loss this ADR exists to prevent,
+reproduced through the door left open next to the one that was closed.
+
+The two allowances are the same event with different meters, and their give-up
+reasons already said so in identical words: *"cut off mid-task — it did not fail
+on any single step."* Which one bites is a property of the **work**, not the
+ticket: fast exploratory turns exhaust the turn cap first (#291, 5.6 turns/min),
+slow heavy turns exhaust the clock first (#175, #177 — 40 minutes without ever
+reaching the turn cap). Raising the wall clock to 60 would not have saved #291
+by a single second.
+
+The predicate now lives in `claude_was_cut_off` beside the give-up semantics
+rather than inline in `implement.sh`, and `tests/test-claude-run.sh` pins both
+subtypes so it cannot narrow again. Every other give-up is unaffected: a run
+that stopped deliberately has an empty tree and `_capture_work` returns 1.
+
+**Consequence for the turn cap.** A wall-clock budget now bounds spend directly,
+so `max_turns` is no longer the backstop against a runaway agent and should sit
+well above real work instead of acting as a second budget. mediamtx-connect
+raised `max_turns.implement` 100 → 200 on this evidence.
 
 ## Payoff trigger
 
