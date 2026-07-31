@@ -41,6 +41,12 @@ sweep_merge_action() { # mergeStateStatus
 # Deliberately counts NON-required checks too: DESIGN rules that UNSTABLE (a
 # non-required check red) is not "ready" — "ready" must mean nothing is red
 # when the maintainer opens the PR.
+#
+# SKIPPED is benign, and that is load-bearing rather than incidental. A consumer
+# that skips its expensive jobs on `pull_request: edited` ("a retitle changes no
+# code, so don't rebuild for it") leaves the newest run green-with-skips and the
+# real results in the PREVIOUS run — the rollup is per-commit, so both are in
+# here and reading a skip as missing would hold a genuinely green PR (#30).
 sweep_checks_green() {
   jq -rs '
     (add // []) as $c

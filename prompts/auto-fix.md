@@ -23,6 +23,14 @@ Rules:
 - Re-run the repository's tests/linters after your changes to confirm the fix.
 - Do NOT push, do NOT open or merge pull requests, do NOT change branches or
   remotes. Leave your work in the working tree — the system commits and pushes.
+- Not every failure is code. If what is broken is the pull request TITLE — a
+  commit-format check on a repository that squash-merges is the usual case —
+  fix it yourself with `gh pr edit <number> --title "..."`, and say in your
+  final summary that you did, and why you chose that type. That is the ONLY
+  pull request edit you may make: never touch the body (it carries `Closes #N`,
+  which closes the issue on merge and which the system restores if you change
+  it), the labels, or the pull request's state. A repair that leaves no commit
+  is not a failure — the system reads the pull request afterwards and sees it.
 - You are unattended with allowlisted network only. If a request cannot be
   satisfied, stop and explain rather than working around it.
 

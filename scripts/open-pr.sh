@@ -21,6 +21,10 @@ main() {
   local issue="$1" branch="${2:-}" attempt="${3:-1}" repo base
   repo="$(sh_repo)"
   sh_require_auth
+  # The PR title now depends on config (conventional_title_types), so a
+  # present-but-broken config must abort rather than quietly title the PR the
+  # old way — same posture as every other config-reading stage.
+  config_load || sh_die "unreadable .smallhours.yml — refusing to run on defaults"
   [ -n "$branch" ] || branch="$(sh_agent_branch "$issue" "$attempt")"
   base="$(sh_default_branch)"
 
@@ -53,7 +57,16 @@ main() {
     gh pr ready --repo "$repo" --undo "$pr" >/dev/null 2>&1 || true   # ensure draft
     state_pr_add_label "$pr" agent
   else
-    local title; title="$(gh issue view "$issue" --repo "$repo" --json title --jq .title)"
+    # The title is the issue's, plus a conventional-commit type when the
+    # consumer configured a label -> type map. On a squash-merging repo this
+    # subject becomes the release commit, so an unprefixed one fails the
+    # commit-format check and costs an auto-fix attempt to correct (#30).
+    # Unconfigured (the default), this is the issue title verbatim.
+    local meta title; meta="$(gh issue view "$issue" --repo "$repo" --json title,labels)"
+    title="$(jq -r '.labels[].name' <<< "$meta" \
+             | config_pr_title "$(jq -r '.title' <<< "$meta")")"
+    [ "$title" = "$(jq -r '.title' <<< "$meta")" ] \
+      || sh_log "open-pr: titled the PR '$title' from the issue's labels"
     # A verify gate that stayed red after its re-entries still gets pushed, so
     # say so on the PR. Silently shipping a known-red branch is worse than
     # having no gate — the reviewer would have no way to tell this apart from a
