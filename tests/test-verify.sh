@@ -37,25 +37,29 @@ chmod +x "$FIX/bin/claude"
 
 # Run verify_gate against a config, with a scripted verify command.
 # Sets: OUT (stderr log), ARGV (claude invocations), FAILED (SH_VERIFY_FAILED)
-gate() { # config-file
-  local cfg="$1"
+gate() { # config-file [home]
+  local cfg="$1" home="${2:-$HOME}"
   ARGV="$FIX/argv.$RANDOM"; : > "$ARGV"
   local base="$FIX/result.$RANDOM.json"
+  : > "$FIX/unresolved.txt"
   FAILED="$(
     PATH="$FIX/bin:$PATH" \
     SH_TEST_CLAUDE_ARGV="$ARGV" \
     SMALLHOURS_CONFIG="$cfg" \
     CLAUDE_CODE_OAUTH_TOKEN=stub \
     SMALLHOURS_JOB_CAP_MINUTES= \
+    HOME="$home" \
     bash -c '
       unset GITHUB_WORKSPACE
       . "$1" 2>/dev/null || exit 90
       verify_gate "$2" 2>"$3"
+      printf "%s" "$SH_VERIFY_UNRESOLVED" > "$4"
       printf "%s" "$SH_VERIFY_FAILED"
-    ' _ "$V" "$base" "$FIX/stderr.txt"
+    ' _ "$V" "$base" "$FIX/stderr.txt" "$FIX/unresolved.txt"
   )"
   GATE_RC=$?
   OUT="$(cat "$FIX/stderr.txt" 2>/dev/null)"
+  UNRESOLVED="$(cat "$FIX/unresolved.txt" 2>/dev/null)"
 }
 
 case_banner "no verify: key — the pre-existing consumer"
@@ -146,6 +150,98 @@ case "$FAILED" in
   *'GH=[] OA=[] GT=[]'*) ok "all three tokens unset for the command" ;;
   *) bad "unexpected verify output: $FAILED" ;;
 esac
+
+case_banner "the gate could not run — the command's own executable is missing"
+# mediamtx-connect#300: `pnpm` was not on the gate's PATH, and re-entry spent 31
+# turns and $2.22 rewriting code that was already correct. The agent cannot
+# change the shell the gate runs in, so re-entry can never succeed here.
+printf 'version: 1\nverify: "sh-no-such-tool-xyz --check"\n' > "$FIX/unres.yml"
+gate "$FIX/unres.yml"
+[ "$GATE_RC" -eq 0 ] && ok "returns 0 — an unrunnable gate never stalls the issue" || bad "returned $GATE_RC"
+case "$(wc -l < "$ARGV" | tr -d ' ')" in
+  0) ok "never re-enters — no Claude stage is spent on an environment fault" ;;
+  *) bad "re-entered $(wc -l < "$ARGV" | tr -d ' ') times on an unresolvable command" ;;
+esac
+case "$UNRESOLVED" in
+  sh-no-such-tool-xyz) ok "SH_VERIFY_UNRESOLVED names the missing executable" ;;
+  '') bad "gate did not classify a missing first token as could-not-run" ;;
+  *) bad "named the wrong executable: $UNRESOLVED" ;;
+esac
+case "$OUT" in *"could not run"*) ok "log says the gate could not run, not that the code failed" ;; *) bad "no could-not-run log: $OUT" ;; esac
+case "$FAILED" in *'exited 127'*) ok "report still carries the command and its exit status" ;; *) bad "no report body: $FAILED" ;; esac
+
+case_banner "a 127 from INSIDE the command is still the agent's to fix"
+# The consumer's own script shells out to a tool the agent should have
+# installed. The gate started, so re-entry can succeed and must happen —
+# distinguishing this from the case above is the whole point of the check.
+cat > "$FIX/bin/wrapper-tool" <<'EOF'
+#!/usr/bin/env bash
+nested-no-such-tool-xyz
+EOF
+chmod +x "$FIX/bin/wrapper-tool"
+cat > "$FIX/bin/claude" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${SH_TEST_CLAUDE_ARGV:?}"
+cat > /dev/null
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":2}'
+EOF
+chmod +x "$FIX/bin/claude"
+printf 'version: 1\nverify: "wrapper-tool"\nverify_reentries: 1\n' > "$FIX/nested.yml"
+gate "$FIX/nested.yml"
+case "$UNRESOLVED" in '') ok "not classified as could-not-run — the gate did start" ;; *) bad "wrongly blamed the environment for $UNRESOLVED" ;; esac
+case "$(wc -l < "$ARGV" | tr -d ' ')" in 1) ok "re-enters so the agent can install what its own command needs" ;; *) bad "expected 1 re-entry, got $(wc -l < "$ARGV" | tr -d ' ')" ;; esac
+
+case_banner "a toolchain on PATH only via shell startup files resolves"
+# The property #29 is about, stated without reference to any language: whatever
+# the agent bootstrapped for itself must be visible to the gate. Three HOME
+# arrangements, because no single bash invocation form covers all of them —
+# ~/.bash_profile shadows ~/.profile, and a login shell never reads ~/.bashrc.
+mkdir -p "$FIX/tools"
+printf '#!/bin/sh\nexit 0\n' > "$FIX/tools/rc-only-tool"; chmod +x "$FIX/tools/rc-only-tool"
+printf 'version: 1\nverify: "rc-only-tool"\nverify_reentries: 0\n' > "$FIX/rc.yml"
+
+# 1. Ubuntu's stock arrangement: ~/.profile sources ~/.bashrc.
+mkdir -p "$FIX/home-profile"
+printf 'if [ -n "$BASH_VERSION" ]; then [ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"; fi\n' > "$FIX/home-profile/.profile"
+printf 'case $- in *i*) ;; *) return;; esac\nexport PATH="%s:$PATH"\n' "$FIX/tools" > "$FIX/home-profile/.bashrc"
+gate "$FIX/rc.yml" "$FIX/home-profile"
+case "$FAILED" in '') ok "resolves via ~/.profile -> ~/.bashrc" ;; *) bad "gate could not see the tool: $FAILED" ;; esac
+
+# 2. A ~/.bash_profile shadows ~/.profile, so the chain to ~/.bashrc is severed.
+mkdir -p "$FIX/home-bashprofile"
+printf '# does not source .bashrc\n' > "$FIX/home-bashprofile/.bash_profile"
+printf 'case $- in *i*) ;; *) return;; esac\nexport PATH="%s:$PATH"\n' "$FIX/tools" > "$FIX/home-bashprofile/.bashrc"
+gate "$FIX/rc.yml" "$FIX/home-bashprofile"
+case "$FAILED" in '') ok "resolves via ~/.bashrc even when ~/.bash_profile shadows the chain" ;; *) bad "gate could not see the tool: $FAILED" ;; esac
+
+# 3. Profile chain only, no ~/.bashrc at all.
+mkdir -p "$FIX/home-loginonly"
+printf 'export PATH="%s:$PATH"\n' "$FIX/tools" > "$FIX/home-loginonly/.bash_profile"
+gate "$FIX/rc.yml" "$FIX/home-loginonly"
+case "$FAILED" in '') ok "resolves via the login profile chain with no ~/.bashrc" ;; *) bad "gate could not see the tool: $FAILED" ;; esac
+
+case_banner "the interactive shell's own noise stays out of the report"
+printf 'version: 1\nverify: "echo real-output; exit 1"\nverify_reentries: 0\n' > "$FIX/noise.yml"
+gate "$FIX/noise.yml"
+case "$FAILED" in
+  *"no job control"*|*"cannot set terminal process group"*)
+    bad "bash's job-control preamble leaked into the PR body: $FAILED" ;;
+  *logout*) bad "the login shell's exit chatter leaked into the PR body: $FAILED" ;;
+  *real-output*) ok "reports the command's output and none of bash's startup chatter" ;;
+  *) bad "lost the command output: $FAILED" ;;
+esac
+# The command's own output must survive even where it looks like shell noise —
+# only the leading/trailing positions are ours to strip.
+printf 'version: 1\nverify: "echo logout; echo tail-line; exit 1"\nverify_reentries: 0\n' > "$FIX/midnoise.yml"
+gate "$FIX/midnoise.yml"
+case "$FAILED" in *logout*tail-line*) ok "a 'logout' the command itself printed is kept" ;; *) bad "stripped the command's own output: $FAILED" ;; esac
+
+case_banner "history expansion never touches the consumer's command"
+# An interactive shell expands `!` in what it parses. A verify command
+# containing one would be mangled before it ran.
+printf 'version: 1\nverify: "test ! -f /nonexistent-xyz && echo bang-ok; exit 1"\nverify_reentries: 0\n' > "$FIX/bang.yml"
+gate "$FIX/bang.yml"
+case "$FAILED" in *bang-ok*) ok "a '!' in the command survives verbatim" ;; *) bad "history expansion mangled the command: $FAILED" ;; esac
 
 echo
 echo "test-verify: $pass passed, $fail failed"
