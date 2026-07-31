@@ -251,9 +251,63 @@ likely to touch:
 - `ci_workflow`: the workflow name the loop treats as the gate.
 - `egress_extra_domains`: extra hosts appended to the sandbox allowlist
   (e.g. your package registry).
+- `sandbox`: widen the sandbox the agent runs under — lists only, appended to a
+  hardened profile. See "Letting the agent check its own work".
+- `verify` / `verify_reentries`: the command the agent's work is checked against
+  before a PR opens, and how many times a failure sends it back to the agent.
 - `labels`: map canonical label names to your repo's existing strings.
 
 The defaults are meant to be good enough that you rarely open this file.
+
+## Letting the agent check its own work
+
+Nothing is installed in the agent's environment. On a repo with dependencies that
+means the agent writes code it cannot compile or test, and CI is the first thing
+that ever runs its work — minutes later, and at the cost of one of your
+`attempt_cap` auto-fix attempts. Two keys close that gap. Both are optional; a
+repo that sets neither behaves exactly as it did before they existed.
+
+**1. Let it install.** `npm_allowed: true` opens your registry, but egress alone
+is not enough: the sandbox permits writes to the working directory and `$TMPDIR`
+only, and a package store lives outside both. Add the store paths:
+
+```yaml
+npm_allowed: true
+sandbox:
+  filesystem:
+    allowWrite: ["~/.local/share/pnpm", "~/.npm", "~/.cache"]
+```
+
+Those paths are ecosystem-specific — `~/.cargo`, `~/.cache/pip`, `~/go/pkg` — so
+smallhours does not guess them. Everything under `sandbox:` is a **list**, and
+lists are appended to a hardened profile: you can add paths, hosts and commands,
+but the protections themselves (`allowUnsandboxedCommands`, `filesystem.disabled`,
+`allowManagedDomainsOnly`, the Unix-socket keys, …) belong to smallhours. Set one
+and it is ignored with a warning. Full key reference:
+[Claude Code sandbox settings](https://code.claude.com/docs/en/settings#sandbox-settings).
+
+Then tell the agent to install, in your repo's `AGENTS.md` or `CLAUDE.md`. It
+reads those; it will not guess your package manager.
+
+**2. Gate the push.** `verify` is any shell command, run after the agent finishes
+and before the pull request opens:
+
+```yaml
+verify: pnpm verify
+verify_reentries: 2
+```
+
+If it fails the agent is **re-entered** — resumed with the command's output — up
+to `verify_reentries` times. A lint or type error caught here costs seconds
+instead of a CI round trip and an auto-fix attempt.
+
+The gate can never stall an issue. Still failing after its re-entries, the branch
+is pushed anyway and the pull request says so, carrying the command, its exit
+status and the tail of its output. CI stays exactly the backstop it already was.
+
+Point `verify` at checks that are **fast and need no services** — linters, type
+checks, unit tests. The agent has no Docker, no browsers, and cannot bind a local
+port, so browser and integration suites belong in CI rather than in the gate.
 
 ## How the loop behaves
 
@@ -281,8 +335,15 @@ ready (yours), nothing in between.
 ## The trust boundaries
 
 - The agent runs inside a network sandbox with an egress allowlist: GitHub,
-  the Claude API, and whatever you add via `egress_extra_domains`. A
-  prompt-injected issue has very few places to send anything.
+  the Claude API, and whatever you add via `egress_extra_domains`, `npm_allowed`
+  or `sandbox.network.allowedDomains`. A prompt-injected issue has very few
+  places to send anything — though every host you add is one more, so add the
+  registry you need rather than the ones you might.
+- The sandbox's protections are smallhours' to set, not your repo's. `sandbox:`
+  can only widen lists, so a compromised or careless change to `.smallhours.yml`
+  cannot turn isolation off. It is also rendered before the agent starts, so a
+  widening the agent writes itself only reaches a pull request, never the run
+  that wrote it.
 - Human approval is structurally required by branch protection; the agent
   cannot approve or merge its own work.
 - Every automation action is performed by the Fixer App, so the audit trail
