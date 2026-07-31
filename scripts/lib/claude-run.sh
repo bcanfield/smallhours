@@ -40,10 +40,19 @@ _SH_BASE_DOMAINS=(
 )
 
 # Print the managed-settings JSON for this consumer: the hardened profile with
-# allowedDomains = base + egress_extra_domains (+ npm registry when npm_allowed).
+# allowedDomains = base + egress_extra_domains (+ npm registry when npm_allowed),
+# then the consumer's own `sandbox:` arrays merged on top (config_sandbox_json
+# has already reduced those to the whitelist — booleans never reach here).
 # WebFetch/WebSearch stay denied (sandbox.network covers Bash only — addendum
 # finding 2); allowManagedPermissionRulesOnly stops a consumer's own settings
 # re-allowing them.
+#
+# npm_allowed grants the REGISTRY but not the writes an install performs: the
+# sandbox permits writes to the working directory and $TMPDIR only, and a package
+# store lives outside both. So egress alone yields a half-failure — resolution
+# succeeds, the store write is denied. Consumers pair it with
+# `sandbox.filesystem.allowWrite`; the store path is package-manager specific
+# (pnpm, npm, cargo, pip all differ), which is why the toolkit does not guess it.
 claude_run_render_settings() {
   local domains=("${_SH_BASE_DOMAINS[@]}") d
   while IFS= read -r d; do [ -n "$d" ] && domains+=("$d"); done < <(config_egress_extra_domains)
@@ -56,30 +65,42 @@ claude_run_render_settings() {
     ignore_scripts="true"
   fi
 
-  local domains_json
+  local domains_json extra_json allow_json
   domains_json="$(printf '%s\n' "${domains[@]}" | jq -R . | jq -s .)"
+  extra_json="$(config_sandbox_json)" || return 1
+  allow_json="$(printf '%s\n' "${_SH_SANDBOX_MERGE_PATHS[@]}" | jq -R . | jq -s .)"
 
-  jq -n --argjson domains "$domains_json" --arg ignore_scripts "$ignore_scripts" '{
-    env: { DISABLE_AUTOUPDATER: "1", NPM_CONFIG_IGNORE_SCRIPTS: $ignore_scripts },
-    permissions: { deny: ["WebFetch", "WebSearch"] },
-    allowManagedPermissionRulesOnly: true,
-    allowManagedHooksOnly: true,
-    sandbox: {
-      enabled: true,
-      failIfUnavailable: true,
-      autoAllowBashIfSandboxed: true,
-      allowUnsandboxedCommands: false,
-      allowManagedDomainsOnly: true,
-      excludedCommands: [],
-      enableWeakerNestedSandbox: false,
-      network: {
-        allowedDomains: $domains,
-        allowUnixSockets: [],
-        allowAllUnixSockets: false,
-        allowLocalBinding: false
+  jq -n --argjson domains "$domains_json" --arg ignore_scripts "$ignore_scripts" \
+        --argjson extra "$extra_json" --argjson allow "$allow_json" '
+    {
+      env: { DISABLE_AUTOUPDATER: "1", NPM_CONFIG_IGNORE_SCRIPTS: $ignore_scripts },
+      permissions: { deny: ["WebFetch", "WebSearch"] },
+      allowManagedPermissionRulesOnly: true,
+      allowManagedHooksOnly: true,
+      sandbox: {
+        enabled: true,
+        failIfUnavailable: true,
+        autoAllowBashIfSandboxed: true,
+        allowUnsandboxedCommands: false,
+        allowManagedDomainsOnly: true,
+        excludedCommands: [],
+        enableWeakerNestedSandbox: false,
+        network: {
+          allowedDomains: $domains,
+          allowUnixSockets: [],
+          allowAllUnixSockets: false,
+          allowLocalBinding: false
+        }
       }
     }
-  }'
+    # Append rather than replace: the built-in `*` merge overwrites arrays, which
+    # would let a consumer DROP a base domain by naming its own list.
+    | reduce ($allow[] | split(".")) as $p (.;
+        ($extra | getpath($p)) as $add
+        | if ($add | type) == "array"
+          then setpath(["sandbox"] + $p; (((getpath(["sandbox"] + $p)) // []) + $add | unique))
+          else . end)
+  '
 }
 
 # Write the managed settings to the managed scope (needs root for the default
@@ -205,19 +226,24 @@ _claude_synthesize_timeout_result() { # stream_jsonl budget_seconds elapsed_ms -
 }
 
 # Run one stage. Returns 0 on a clean result, non-zero on give-up.
-#   claude_run <stage> <prompt_file> <out_json>
-# stage ∈ implement | address_review | auto_fix | resolve_conflict
+#   claude_run <stage> <prompt_file> <out_json> [continue]
+# stage ∈ implement | address_review | auto_fix | resolve_conflict | verify_reentry
+# A 4th argument of `continue` resumes the most recent conversation in this
+# directory instead of starting a fresh one — the verify gate's re-entry, which
+# needs the context that produced the change it is being asked to repair.
 # Requires CLAUDE_CODE_OAUTH_TOKEN in the environment.
 claude_run() {
-  local stage="$1" prompt_file="$2" out="$3"
+  local stage="$1" prompt_file="$2" out="$3" resume="${4:-}"
   [ -f "$prompt_file" ] || sh_die "claude_run: prompt file not found: $prompt_file"
   [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || sh_die "claude_run: CLAUDE_CODE_OAUTH_TOKEN not set"
 
   local model max_turns budget
   model="$(config_model "$stage")"
   max_turns="$(config_max_turns "$stage")"
+  # Derived from ELAPSED time, so a re-entry is bounded by whatever the implement
+  # run left behind rather than granted a fresh budget it does not have.
   budget="$(claude_run_budget_seconds)"
-  sh_log "claude_run: stage=$stage model=$model max_turns=$max_turns budget=${budget:-none}s"
+  sh_log "claude_run: stage=$stage model=$model max_turns=$max_turns budget=${budget:-none}s resume=${resume:-no}"
 
   # stream-json is the only format that emits per-turn tool-use events;
   # --output-format json buffers the whole run into one final object, so what
@@ -231,24 +257,23 @@ claude_run() {
   # --print mode.
   local stream="${out}.stream"
   local rc=0 t0 elapsed_ms
+  local -a cmd=(
+    claude -p
+    --permission-mode acceptEdits
+    --model "$model"
+    --max-turns "$max_turns"
+    --output-format stream-json --verbose
+  )
+  [ "$resume" = "continue" ] && cmd+=(--continue)
+
   t0="$(date +%s)"
   # --kill-after: SIGTERM first so the CLI can flush what it has, SIGKILL 30s
   # later if it doesn't. Without the budget (uncapped) this is a plain exec.
   if [ -n "$budget" ]; then
-    timeout --kill-after=30s "${budget}s" \
-    claude -p \
-      --permission-mode acceptEdits \
-      --model "$model" \
-      --max-turns "$max_turns" \
-      --output-format stream-json --verbose \
+    timeout --kill-after=30s "${budget}s" "${cmd[@]}" \
       < "$prompt_file" > "$stream" 2> "$out.stderr" || rc=$?
   else
-    claude -p \
-      --permission-mode acceptEdits \
-      --model "$model" \
-      --max-turns "$max_turns" \
-      --output-format stream-json --verbose \
-      < "$prompt_file" > "$stream" 2> "$out.stderr" || rc=$?
+    "${cmd[@]}" < "$prompt_file" > "$stream" 2> "$out.stderr" || rc=$?
   fi
   elapsed_ms=$(( ($(date +%s) - t0) * 1000 ))
 

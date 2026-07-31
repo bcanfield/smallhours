@@ -107,6 +107,28 @@ config file; never automation logic.
 requires: triggers, permissions ceiling, one versioned `uses:` reference to the
 toolkit, secret wiring. Deliberately kept too thin to need syncing.
 
+**Agent phase** — The part of a stage during which Claude Code is running. Its
+filesystem and network boundary is the sandbox Claude Code itself enforces from
+managed settings; the toolkit renders that profile and a consumer may only widen
+its lists. Everything before and after — checkout, provisioning, the verify gate,
+commit, push, PR — is outside it, on the runner.
+_Avoid_: the sandbox (that is the boundary, not the phase), the run
+
+**Verify gate** — The consumer's own command, run against the agent's work after
+the agent phase and before a pull request exists. The toolkit reads only its exit
+status; the command is free-form and language-neutral. A gate that stays red
+pushes anyway and says so on the PR, so the gate can make the loop faster but
+never stricter — it cannot strand an issue that would otherwise have reached
+review.
+_Avoid_: preflight, CI check, the tests
+
+**Re-entry** — Resuming the agent's *same* session, inside the *same* job, to
+repair a red verify gate. The third and innermost of the system's three loops,
+and deliberately its own word: an **attempt** is a CI auto-fix across jobs
+(`autofix-attempt-N`, `attempt_cap`), a **re-summon** is a requested-changes
+review across stages, and a re-entry is neither. Counted by `verify_reentries`.
+_Avoid_: retry, attempt (both already mean the CI auto-fix loop)
+
 ## Invariants
 
 - Exactly one state label per triaged issue at all times; transitions replace,
