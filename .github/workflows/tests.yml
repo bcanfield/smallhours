@@ -1,0 +1,52 @@
+name: Tests
+
+# The toolkit's own gate. Until this existed, tests/*.sh ran only when a
+# maintainer remembered to run them by hand — so the suites asserting that a
+# consumer cannot flip `allowUnsandboxedCommands` or `filesystem.disabled` (the
+# sandbox profile ADR 0001 rests on) could regress without anything noticing.
+#
+# Deliberately NOT named "CI": consumers set `ci_workflow` to the workflow the
+# agent loop gates on, and a name collision here would be confusing to read even
+# though this repo is not its own consumer.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Every suite is pure logic — no network, no gh auth, no sudo — so this needs
+# nothing beyond reading the code.
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Shell test suites
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned rather than taking whatever the runner image ships: versions.env
+      # is the single source of truth for every tool the toolkit targets
+      # (ADR 0004), and a yq that parses .smallhours.yml differently to the one
+      # the agent job installs would make this gate a liar.
+      - name: Load pinned versions
+        run: grep -E '^[A-Z_][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+
+      - name: Install pinned yq
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/yq \
+            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          sudo install -m 0755 /tmp/yq /usr/local/bin/yq
+          yq --version
+
+      - name: Versions
+        run: |
+          bash --version | head -1
+          jq --version
+          yq --version
+
+      - name: Run test suites
+        run: tests/run-all.sh
