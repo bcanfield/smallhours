@@ -100,22 +100,54 @@ jobs:
           probe_fn_tool() { echo "fn-tool ran"; }
           EOF
 
-      # Evidence for the log, whatever the assertions do. `bash -lc` — the
-      # obvious one-word fix, and the one #29 proposed — is expected to resolve
-      # NOTHING: ~/.bashrc returns at its first line when non-interactive, which
-      # is above where every installer appends.
+      # Evidence for the log, whatever the assertions do — and the table in
+      # ADR 0011 is only as good as its last run here.
+      #
+      # Two rows carry the argument. `bash -lc` is the obvious one-word fix and
+      # the one #29 proposed: it resolves NOTHING, because ~/.bashrc returns at
+      # its first line when non-interactive, above where every installer
+      # appends. And bare `bash -lic` resolves nothing EITHER on this image —
+      # the runner user has a ~/.bash_profile, which shadows the ~/.profile that
+      # would otherwise have sourced ~/.bashrc. Only the last row, which is what
+      # the gate actually runs, works. Delete the explicit source and the gate
+      # silently goes back to seeing nothing.
       - name: Record what each shell form resolves
         run: |
           set -uo pipefail
+          probe='command -v probe-path-tool >/dev/null && echo yes || echo no'
+          fnprobe='type -t probe_fn_tool >/dev/null 2>&1 && echo yes || echo no'
+          src='[ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc" || true; '
           for form in "-c" "-lc" "-ic" "-lic"; do
-            p="$(bash $form 'command -v probe-path-tool >/dev/null && echo yes || echo no' 2>/dev/null)"
-            f="$(bash $form 'type -t probe_fn_tool >/dev/null 2>&1 && echo yes || echo no' 2>/dev/null)"
-            printf 'bash %-5s  PATH entry: %-3s  shell function: %s\n' "$form" "$p" "$f"
+            p="$(bash $form "$probe" 2>/dev/null)"
+            f="$(bash $form "$fnprobe" 2>/dev/null)"
+            printf 'bash %-5s              PATH entry: %-3s  shell function: %s\n' "$form" "$p" "$f"
           done
+          p="$(bash -lic "$src$probe" 2>/dev/null)"
+          f="$(bash -lic "$src$fnprobe" 2>/dev/null)"
+          printf 'bash -lic + . ~/.bashrc  PATH entry: %-3s  shell function: %s   <- what the gate runs\n' "$p" "$f"
+          printf '\ncommand_not_found_handle defined in an interactive shell: %s\n' \
+            "$(bash -ic 'type -t command_not_found_handle || echo no' 2>/dev/null)"
 
       - name: The gate must see both, and must say so when it sees neither
+        env:
+          # A stub `claude`, so a FAILED classification shows up as "it
+          # re-entered" instead of killing the step on a missing OAuth token.
+          # The first run of this job died that way and reported nothing about
+          # the actual defect.
+          CLAUDE_CODE_OAUTH_TOKEN: stub-not-a-real-token
         run: |
           set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stub-bin"
+          cat > "$RUNNER_TEMP/stub-bin/claude" <<'STUB'
+          #!/usr/bin/env bash
+          echo "RE-ENTERED" >> "$RUNNER_TEMP/reentries"
+          cat > /dev/null
+          printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":1}'
+          STUB
+          chmod +x "$RUNNER_TEMP/stub-bin/claude"
+          export PATH="$RUNNER_TEMP/stub-bin:$PATH"
+          : > "$RUNNER_TEMP/reentries"
+
           . scripts/lib/verify.sh
 
           probe() { # name config-body -> sets FAILED / UNRESOLVED
@@ -154,7 +186,19 @@ jobs:
             echo "ok: an unresolvable command is classified as could-not-run"
           else
             echo "::error::unresolvable command was not classified (SH_VERIFY_UNRESOLVED='$SH_VERIFY_UNRESOLVED')"
+            # The classification parses one message, so when it misses, the
+            # message is the diagnosis. Print it rather than making the next
+            # person re-run this to find out.
+            echo "--- what the gate actually captured ---"
+            printf '%s\n' "$SH_VERIFY_FAILED"
+            echo "--- command_not_found_handle: $(bash -ic 'type -t command_not_found_handle || echo undefined' 2>/dev/null) ---"
             rc=1
+          fi
+          if [ -s "$RUNNER_TEMP/reentries" ]; then
+            echo "::error::the gate re-entered on an environment fault — that is the wasted stage #29 exists to stop"
+            rc=1
+          else
+            echo "ok: no Claude re-entry was spent"
           fi
 
           exit "$rc"

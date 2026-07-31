@@ -48,17 +48,39 @@ guard. A non-interactive shell returns at line one and reads none of it.
 Nor is `-lic` a superset of `-ic`. Bash reads `~/.bashrc` for an interactive
 **non-login** shell, and `/etc/profile` plus the first of `~/.bash_profile`,
 `~/.bash_login`, `~/.profile` for an interactive **login** shell — never both.
-Ubuntu's stock `~/.profile` sources `~/.bashrc`, which is the only reason `-lic`
-works there at all; any installer that drops a `~/.bash_profile` shadows
-`~/.profile` and silently severs that chain. Measured:
+Ubuntu's stock `~/.profile` sources `~/.bashrc`; any file that shadows
+`~/.profile` silently severs that chain.
 
-| form | PATH entry from `~/.bashrc` | tool via profile chain only |
+Measured on `ubuntu-24.04` by the `gate-environment` job, against a toolchain
+bootstrapped the way an agent bootstraps one:
+
+| form | PATH entry from `~/.bashrc` | shell function from `~/.bashrc` |
 |---|---|---|
 | `bash -c` | no | no |
-| `bash -lc` | **no** | yes |
-| `bash -ic` | yes | no |
-| `bash -lic` | yes (via `~/.profile`) | yes |
-| `bash -lic` + explicit `. ~/.bashrc` | yes (always) | yes |
+| `bash -lc` | **no** | **no** |
+| `bash -ic` | yes | yes |
+| `bash -lic` | **no** | **no** |
+| `bash -lic` + explicit `. ~/.bashrc` | yes | yes |
+
+The fourth row is the one to remember. **The hosted runner's user has a
+`~/.bash_profile`**, so the login shell never reaches `~/.profile` and never
+reaches `~/.bashrc` — bare `-lic` resolves exactly nothing there. Only the last
+row works, and it is the only reason this ADR's fix does anything at all. This
+was caught by the job on its first run, on a build that would otherwise have
+shipped looking correct.
+
+### One more thing `-i` drags in
+
+An interactive shell sources `/etc/bash.bashrc`, where Debian and Ubuntu define
+`command_not_found_handle`. A missing command then prints the distro's
+apt-suggestion text instead of bash's own `…: command not found` — so the
+classification in decision 2, which parses exactly that one message, stopped
+recognising it. Same first run, same job: the gate re-entered on an unresolvable
+command, which is precisely the waste it was written to prevent.
+
+The handler is unset in the gate's shell. It is a nicety for humans at a prompt;
+in a CI gate it costs an apt-database query and makes the one message this gate
+must parse depend on which distro the runner happens to be.
 
 ## Decision
 
@@ -124,9 +146,19 @@ classified rather than re-entered.
 
 The unit suites cannot cover this: they are pure logic by contract, and they
 prove the gate against fixtures we wrote. Whether a *real runner image's*
-startup files defeat us is a fact only a runner can answer. A future image that
-stops sourcing `~/.bashrc` from `~/.profile`, or ships a `~/.bash_profile`, would
-otherwise silently return every consumer to the failure this ADR exists to fix.
+startup files defeat us is a fact only a runner can answer.
+
+This is not hypothetical. **Both defects in the "what the shell actually does"
+section above were found by this job on its first run**, on a change whose unit
+suites were green and whose author had measured the behaviour by hand on a
+different OS. The runner shipped a `~/.bash_profile` and a
+`command_not_found_handle`; the development machine had neither. Without the
+job, this ADR's fix would have merged, resolved nothing, and been discovered by
+a consumer one wasted agent run at a time — the exact failure it exists to fix.
+
+Everything the job asserts is also mirrored in `tests/test-verify.sh` against
+fixtures reproducing the runner's arrangement, so the regression is caught
+locally too; the job is what proves the fixtures still match reality.
 
 ## Consequences
 

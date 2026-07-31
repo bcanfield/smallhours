@@ -170,6 +170,28 @@ esac
 case "$OUT" in *"could not run"*) ok "log says the gate could not run, not that the code failed" ;; *) bad "no could-not-run log: $OUT" ;; esac
 case "$FAILED" in *'exited 127'*) ok "report still carries the command and its exit status" ;; *) bad "no report body: $FAILED" ;; esac
 
+case_banner "a distro's command-not-found handler does not defeat the classification"
+# `-i` pulls in /etc/bash.bashrc, where Debian and Ubuntu define
+# command_not_found_handle. Its message is the distro's, not bash's, so the
+# gate stops recognising the one thing it has to parse. Caught on a real
+# ubuntu-24.04 runner, where the gate re-entered on an unresolvable command and
+# the run died on the missing OAuth token.
+mkdir -p "$FIX/home-cnf"
+cat > "$FIX/home-cnf/.bashrc" <<'EOF'
+command_not_found_handle() {
+  printf "Command '%s' not found, but can be installed with:\n" "$1" >&2
+  printf "apt install something\n" >&2
+  return 127
+}
+EOF
+printf 'version: 1\nverify: "sh-no-such-tool-xyz"\nverify_reentries: 2\n' > "$FIX/cnf.yml"
+gate "$FIX/cnf.yml" "$FIX/home-cnf"
+case "$UNRESOLVED" in
+  sh-no-such-tool-xyz) ok "classified despite the distro handler" ;;
+  *) bad "the distro's handler hid the missing command (UNRESOLVED='$UNRESOLVED')" ;;
+esac
+case "$(wc -l < "$ARGV" | tr -d ' ')" in 0) ok "still no re-entry" ;; *) bad "re-entered anyway" ;; esac
+
 case_banner "a 127 from INSIDE the command is still the agent's to fix"
 # The consumer's own script shells out to a tool the agent should have
 # installed. The gate started, so re-entry can succeed and must happen —
