@@ -80,10 +80,12 @@ _verify_strip_shell_noise() { # log
   ' "$log" > "$tmp" && mv "$tmp" "$log"
 }
 
-# The executable bash reported as missing, or empty. Tolerates every prefix bash
-# puts in front of it (`bash: line 3:`, `bash: eval: line 1:`).
+# The executable bash reported as missing, or empty. Two passes rather than one
+# expression: the prefix bash puts in front (`bash: line 3:`, `bash: eval:
+# line 1:`) is not always there, and making it optional needs `\?`, which GNU sed
+# has and BSD sed does not — this suite runs on both.
 _verify_missing_command() { # log
-  sed -n 's/.*: \([^:]*\): command not found$/\1/p' "$1" | tail -n 1
+  sed -n 's/: command not found$//p' "$1" | sed 's/.*: //' | tail -n 1
 }
 
 verify_gate() { # result_json
@@ -130,6 +132,14 @@ verify_gate() { # result_json
     #       that file and silently severs the chain. Re-sourcing when the profile
     #       already did is safe — rc files guard their own PATH edits.
     #
+    # `-i` also drags in /etc/bash.bashrc, where Debian and Ubuntu define
+    # `command_not_found_handle` — so a missing command prints the distro's
+    # apt-suggestion text instead of bash's own `…: command not found`, and the
+    # classification below silently stops recognising it. Unset it: a
+    # package-suggestion nicety for humans at a prompt has no business in a CI
+    # gate, where it costs an apt-database query and makes the one message this
+    # gate has to parse depend on which distro the runner happens to be.
+    #
     # The command travels in the environment and is eval'd rather than being
     # interpolated into the -c string: an interactive shell history-expands what
     # it parses, so a `!` anywhere in the consumer's command would otherwise be
@@ -138,6 +148,7 @@ verify_gate() { # result_json
       SH_VERIFY_CMD="$cmd" \
       bash -lic 'set +H
                  [ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc" || true
+                 unset -f command_not_found_handle 2>/dev/null || true
                  _c="$SH_VERIFY_CMD"; unset SH_VERIFY_CMD; eval "$_c"' \
       > "$log" 2>&1 || rc=$?
     _verify_strip_shell_noise "$log"
