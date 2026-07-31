@@ -52,3 +52,6 @@ someone must read, maintain, and eventually delete. Before creating one:
   `docs/IMPLEMENTATION-PLAN.md`.
 - `versions.env` pins every tool version (ADR 0002); workflows source it
   rather than hardcoding versions.
+- `tests/run-all.sh` runs every suite and is exactly what the `Tests` workflow
+  runs on a PR. Needs `bash`, `jq` and `yq` and nothing else — no network, no
+  `gh` auth, no sudo. Run it before you push.
