@@ -427,6 +427,28 @@ DESIGN specifies. What the rollout found instead was in the seams.
 > sections would find no refs to normalize. Consumer-side follow-up (re-cut
 > #175, edge #177, convert the other five tickets) is tracked on that repo.
 
+> **FIXED 2026-07-30 (out-of-tree repairs, smallhours#30).** mediamtx-connect
+> #307 had green code checks and one red one — the PR title, which `open-pr.sh`
+> takes from the issue title verbatim and which semantic-release parses on a
+> squash-merging repo. `auto_fix` retitled the PR, the check went green, and the
+> toolkit handed the PR to a human as a failure anyway: `auto-fix.sh` read an
+> empty `git diff --cached` as "the agent could not fix it", which is right for
+> a code failure and wrong for every repair that lives outside the tree.
+> **ADR 0009**: the agent may retitle a PR — and nothing else; the body carries
+> `Closes #N` and is restored if touched — and the toolkit decides by
+> **observing** the pull request (a pre-run snapshot of title/body/check-rollup,
+> diffed after) rather than by trusting a claim it cannot check. CI moving is a
+> repair; a retitle with no CI behind it within 120s is a hand-off that names
+> its own cause (the consumer's CI does not run on `pull_request: edited`); only
+> a PR that did not move at all is still "made no changes". Prevention alongside
+> it: `conventional_title_types` maps an issue label to a commit type at
+> PR-open time, opt-in by presence, verbatim when nothing maps — a guessed
+> `chore:` would drop a feature out of the release. New pure lib
+> `lib/autofix.sh` fixture-tested in `tests/test-autofix.sh`, plus
+> `tests/test-autofix-cleantree.sh` driving the seam end to end against stubbed
+> `gh`/`claude` — the ADR 0007 lesson applied before it could bite. New debt:
+> `unattributed-ci-movement-strands-pr`, `conventional-title-map-is-opt-in`.
+
 ## Future (out of scope until scheduled)
 
 GitLab port (CI/CD component + webhook→pipeline-trigger bridge + schedules) ·
@@ -448,6 +470,10 @@ egress_extra_domains: []   # appended to the sandbox allowlist
 npm_allowed: false         # when true, ignore-scripts=true is enforced
 labels: {}                 # canonical → repo label string (06-1); ready-for-agent,
                            # agent-working, agent are fixed in v1 (workflow-gated)
+conventional_title_types: {}   # issue label → commit type, e.g. {bug: fix,
+                           # enhancement: feat}. Presence is the opt-in; absent
+                           # means PR titles stay the issue title verbatim
+                           # (ADR 0009)
 ```
 
 ## Risk register

@@ -256,6 +256,21 @@ likely to touch:
 - `verify` / `verify_reentries`: the command the agent's work is checked against
   before a PR opens, and how many times a failure sends it back to the agent.
 - `labels`: map canonical label names to your repo's existing strings.
+- `conventional_title_types`: set this if your repo enforces conventional
+  commits. A PR is titled from its issue title, and on a squash-merging repo
+  that title becomes the release commit — so an unprefixed one fails your own
+  format check and costs an auto-fix attempt to correct. Map your issue labels
+  to commit types and the prefix comes for free:
+
+  ```yaml
+  conventional_title_types:
+    bug: fix
+    enhancement: feat
+  ```
+
+  Leave it out and titles pass through verbatim, exactly as before. An issue
+  whose labels don't map is also left verbatim — smallhours will not guess a
+  type, because guessing `chore:` would drop a feature out of your next release.
 
 The defaults are meant to be good enough that you rarely open this file.
 

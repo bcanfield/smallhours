@@ -23,6 +23,8 @@
 #   config_sandbox_json               consumer sandbox contribution, whitelisted
 #   config_verify                     verify-gate command (empty = no gate)
 #   config_verify_reentries           how many re-entries a red gate gets
+#   config_conventional_title_types   label -> commit type map (empty = off)
+#   config_pr_title <issue-title>     that map applied (issue labels on stdin)
 #   label_for <canonical>             repo label string for a canonical name
 #   state_labels_resolved             resolved state axis, one per line
 #   Label constants + helpers (see below).
@@ -330,4 +332,80 @@ config_verify_reentries() {
     ''|*[!0-9]*) echo "$_SH_DEFAULT_VERIFY_REENTRIES" ;;
     *)           echo "$v" ;;
   esac
+}
+
+# ── Conventional-commit pull request titles ───────────────────────────────────
+# open-pr.sh titles a PR from its issue title verbatim. On a consumer that
+# squash-merges, that subject IS the commit semantic-release parses — so an
+# unprefixed issue title fails the repo's own commit-format check, and the
+# correction costs a full auto-fix attempt for a change whose code was already
+# green (smallhours#30). This map buys the prefix for free:
+#
+#   conventional_title_types:
+#     bug: fix
+#     enhancement: feat
+#
+# PRESENCE IS THE OPT-IN. Absent (the default) means titles pass through
+# verbatim — every pre-existing consumer's behaviour unchanged. A repo that does
+# not use conventional commits must never have prefixes invented for it.
+#
+# Keys are matched against the issue's own labels: a canonical name resolves
+# through the labels: mapping first (so `bug:` still works for a repo that
+# renamed the label `type:bug`), anything else matches the label string
+# verbatim (so a `docs` label the toolkit has no vocabulary for still works).
+config_conventional_title_types() { # -> "label<TAB>type" lines, in config order
+  config_load || return 1
+  local k v
+  while IFS=$'\t' read -r k v; do
+    [ -n "$k" ] || continue
+    _sh_is_canonical_label "$k" && k="$(_sh_label_raw "$k")"
+    printf '%s\t%s\n' "$k" "$v"
+  done < <(printf '%s' "$_SH_CONFIG_JSON" \
+             | jq -r '.conventional_title_types // {} | to_entries[] | [.key, .value] | @tsv')
+}
+
+# The conventional-commits standard type vocabulary. A title already starting
+# with one of these — or with a type the consumer's own map declares — is left
+# alone; anything else before a colon is prose, not a type.
+_SH_CONVENTIONAL_TYPES="build chore ci docs feat fix perf refactor revert style test"
+
+# The pull request title for an issue: its title, prefixed with a conventional
+# commit type when one is configured and one of the issue's labels maps to it.
+#   printf '%s\n' $labels | config_pr_title "<issue title>"
+#
+# Passes the title through UNCHANGED when no map is configured, when the title
+# already carries a type, or when no label maps. That last one is deliberate:
+# guessing `chore:` on a feature would silently drop it out of the consumer's
+# next release, which is the exact harm the check being satisfied here exists to
+# prevent. An unprefixed title instead falls through to auto-fix, which can now
+# retitle without costing a hand-off (ADR 0009) — a ladder, not a guess.
+#
+# Config order breaks ties when an issue carries two mapped labels; jq preserves
+# the order the keys were written in.
+config_pr_title() { # issue-title  (issue labels on stdin, one per line)
+  local title="$1" labels l t head known
+  labels="$(cat)"
+
+  # Already conventional — `type: `, `type(scope): `, `type!: `, `type(scope)!: `
+  # — where `type` is a REAL type. Deliberately not "anything before a colon":
+  # plenty of issue titles read "Streams: record toggle broken", and a checker
+  # whose type list rejects `Streams` wants exactly those prefixed.
+  head="$(printf '%s' "$title" | grep -oE '^[a-zA-Z]+(\([^)]*\))?!?: ' \
+          | grep -oE '^[a-zA-Z]+' | tr '[:upper:]' '[:lower:]')"
+  if [ -n "$head" ]; then
+    known="$_SH_CONVENTIONAL_TYPES $(config_conventional_title_types | cut -f2 | tr '\n' ' ')"
+    case " $known " in
+      *" $head "*) printf '%s\n' "$title"; return 0 ;;
+    esac
+  fi
+
+  while IFS=$'\t' read -r l t; do
+    [ -n "$l" ] && [ -n "$t" ] || continue
+    if printf '%s\n' "$labels" | grep -Fxq "$l"; then
+      printf '%s: %s\n' "$t" "$title"
+      return 0
+    fi
+  done < <(config_conventional_title_types)
+
+  printf '%s\n' "$title"
 }
