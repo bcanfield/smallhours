@@ -30,9 +30,20 @@
 # Self-checkout: jobs that need the toolkit's own files check out
 # ${{ job.workflow_repository }}@${{ job.workflow_sha }} — the EXACT version the
 # consumer invoked (the floating v1 SHA), never drifting from the routing above.
-# The consumer-config composite action rides that same checkout/version.
 # (actionlint <= 1.7.x flags job.workflow_repository/workflow_sha as unknown; its
 # schema is stale — these are documented job-context fields. Not a real error.)
+#
+# ...and then MOVES it out of the consumer worktree to $RUNNER_TEMP, publishing
+# the destination as $SH_TOOLKIT (ADR 0010). Inside the workspace, the consumer's
+# own repo-wide tooling walks into our sources — a lint or type-check run by the
+# verify gate fails on files that are not theirs. `.git/info/exclude` kept `git
+# add -A` off it but nothing outside git reads that file, so every consumer paid
+# a verify-gate re-entry to discover the same thing.
+#
+# The move is a separate step because actions/checkout's `path` must be relative
+# to $GITHUB_WORKSPACE and it refuses anything outside it. $SH_TOOLKIT comes from
+# $GITHUB_ENV rather than a workflow-level `env:` because the `runner` context is
+# not available there.
 name: agent-loop
 
 on:
@@ -75,18 +86,24 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
+      - name: Move the toolkit out of the consumer worktree
+        run: |
+          mv "$GITHUB_WORKSPACE/.smallhours-toolkit" "$RUNNER_TEMP/smallhours-toolkit"
+          echo "SH_TOOLKIT=$RUNNER_TEMP/smallhours-toolkit" >> "$GITHUB_ENV"
       # Label mapping (ADR 0006 / 06-1): every job whose script touches labels
       # needs the consumer config so canonical names resolve.
-      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
-        with:
-          token: ${{ steps.token.outputs.token }}
+      - name: Install pinned yq, fetch consumer config
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          "$SH_TOOLKIT/scripts/consumer-config.sh"
       - id: gate
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
         run: |
           set -uo pipefail
-          if .smallhours-toolkit/scripts/authorize.sh \
+          if "$SH_TOOLKIT/scripts/authorize.sh" \
                "${{ github.event.issue.number }}" "${{ github.event.sender.login }}"; then
             echo "authorized=true"  >> "$GITHUB_OUTPUT"
           else
@@ -115,14 +132,21 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
-      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
-        with:
-          token: ${{ steps.token.outputs.token }}
+      - name: Move the toolkit out of the consumer worktree
+        run: |
+          mv "$GITHUB_WORKSPACE/.smallhours-toolkit" "$RUNNER_TEMP/smallhours-toolkit"
+          echo "SH_TOOLKIT=$RUNNER_TEMP/smallhours-toolkit" >> "$GITHUB_ENV"
+      - name: Install pinned yq, fetch consumer config
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          "$SH_TOOLKIT/scripts/consumer-config.sh"
       - name: Dispatch
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
-        run: .smallhours-toolkit/scripts/dispatch.sh
+        run: |
+          "$SH_TOOLKIT/scripts/dispatch.sh"
 
   # ── Dispatcher on the schedule tick (or a manual dispatch) — drains the queue
   dispatch_scheduled:
@@ -145,14 +169,21 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
-      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
-        with:
-          token: ${{ steps.token.outputs.token }}
+      - name: Move the toolkit out of the consumer worktree
+        run: |
+          mv "$GITHUB_WORKSPACE/.smallhours-toolkit" "$RUNNER_TEMP/smallhours-toolkit"
+          echo "SH_TOOLKIT=$RUNNER_TEMP/smallhours-toolkit" >> "$GITHUB_ENV"
+      - name: Install pinned yq, fetch consumer config
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          "$SH_TOOLKIT/scripts/consumer-config.sh"
       - name: Dispatch
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
-        run: .smallhours-toolkit/scripts/dispatch.sh
+        run: |
+          "$SH_TOOLKIT/scripts/dispatch.sh"
 
   # ── Sweep (M7): T5/T6 decisions, watchdog, label reconciliation ────────────
   # Decider only — no sandbox, no Claude. When it finds a DIRTY agent PR it
@@ -180,16 +211,22 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
-      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
-        with:
-          token: ${{ steps.token.outputs.token }}
+      - name: Move the toolkit out of the consumer worktree
+        run: |
+          mv "$GITHUB_WORKSPACE/.smallhours-toolkit" "$RUNNER_TEMP/smallhours-toolkit"
+          echo "SH_TOOLKIT=$RUNNER_TEMP/smallhours-toolkit" >> "$GITHUB_ENV"
+      - name: Install pinned yq, fetch consumer config
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          "$SH_TOOLKIT/scripts/consumer-config.sh"
       - id: sw
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
         run: |
           set -euo pipefail
-          out="$(.smallhours-toolkit/scripts/sweep.sh)"
+          out="$("$SH_TOOLKIT/scripts/sweep.sh")"
           case "$out" in
             conflict=*) echo "conflict_pr=${out#conflict=}" >> "$GITHUB_OUTPUT" ;;
             *)          echo "conflict_pr="                 >> "$GITHUB_OUTPUT" ;;
@@ -221,20 +258,21 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
-      # The toolkit checkout lives inside the consumer worktree; keep `git add -A`
-      # in the scripts from ever committing it (ADR 0005 bugfix).
-      - name: Exclude the toolkit checkout from consumer commits
-        run: echo '/.smallhours-toolkit/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
+      - name: Move the toolkit out of the consumer worktree
+        run: |
+          mv "$GITHUB_WORKSPACE/.smallhours-toolkit" "$RUNNER_TEMP/smallhours-toolkit"
+          echo "SH_TOOLKIT=$RUNNER_TEMP/smallhours-toolkit" >> "$GITHUB_ENV"
       - name: Load pinned versions
-        run: grep -E '^[A-Z_][A-Z0-9_]*=' .smallhours-toolkit/versions.env >> "$GITHUB_ENV"
-      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
-        with:
-          token: ${{ steps.token.outputs.token }}
-          fetch-config: 'false'
+        run: grep -E '^[A-Z_][A-Z0-9_]*=' "$SH_TOOLKIT/versions.env" >> "$GITHUB_ENV"
+      # The consumer repo is checked out, so .smallhours.yml is already in the
+      # workspace (lib/config.sh's default path) — only yq is needed.
+      - name: Install pinned yq
+        run: |
+          "$SH_TOOLKIT/scripts/consumer-config.sh" --no-fetch-config
       - name: Provision sandbox (bubblewrap, Claude, managed settings)
         run: |
           set -euo pipefail
-          source .smallhours-toolkit/scripts/lib/claude-run.sh
+          source "$SH_TOOLKIT/scripts/lib/claude-run.sh"
           claude_run_provision
       - name: Resolve the merge conflict, report usage
         env:
@@ -242,7 +280,7 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -euo pipefail
-          T=.smallhours-toolkit/scripts
+          T="$SH_TOOLKIT/scripts"
           pr="${{ needs.sweep.outputs.conflict_pr }}"
           "$T/resolve-conflict.sh" "$pr"
           "$T/report-usage.sh" "$pr" "${RUNNER_TEMP}/smallhours-result.json" resolve_conflict
@@ -328,20 +366,21 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
-      # The toolkit checkout lives inside the consumer worktree; keep `git add -A`
-      # in the scripts from ever committing it (ADR 0005 bugfix).
-      - name: Exclude the toolkit checkout from consumer commits
-        run: echo '/.smallhours-toolkit/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
+      - name: Move the toolkit out of the consumer worktree
+        run: |
+          mv "$GITHUB_WORKSPACE/.smallhours-toolkit" "$RUNNER_TEMP/smallhours-toolkit"
+          echo "SH_TOOLKIT=$RUNNER_TEMP/smallhours-toolkit" >> "$GITHUB_ENV"
       - name: Load pinned versions
-        run: grep -E '^[A-Z_][A-Z0-9_]*=' .smallhours-toolkit/versions.env >> "$GITHUB_ENV"
-      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
-        with:
-          token: ${{ steps.token.outputs.token }}
-          fetch-config: 'false'
+        run: grep -E '^[A-Z_][A-Z0-9_]*=' "$SH_TOOLKIT/versions.env" >> "$GITHUB_ENV"
+      # The consumer repo is checked out, so .smallhours.yml is already in the
+      # workspace (lib/config.sh's default path) — only yq is needed.
+      - name: Install pinned yq
+        run: |
+          "$SH_TOOLKIT/scripts/consumer-config.sh" --no-fetch-config
       - name: Provision sandbox (bubblewrap, Claude, managed settings)
         run: |
           set -euo pipefail
-          source .smallhours-toolkit/scripts/lib/claude-run.sh
+          source "$SH_TOOLKIT/scripts/lib/claude-run.sh"
           claude_run_provision
       - name: Implement, open draft PR, report usage
         env:
@@ -349,7 +388,7 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -euo pipefail
-          T=.smallhours-toolkit/scripts
+          T="$SH_TOOLKIT/scripts"
           issue="${{ github.event.issue.number }}"
           branch="$("$T/implement.sh" "$issue")"
           pr="$("$T/open-pr.sh" "$issue" "$branch")"
@@ -381,7 +420,9 @@ jobs:
           GH_TOKEN: ${{ steps.token.outputs.token }}
         run: |
           set -uo pipefail
-          T=.smallhours-toolkit/scripts
+          # `:-` because a cancellation before the move step leaves SH_TOOLKIT
+          # unset, and `set -u` would abort here instead of reaching the guard.
+          T="${SH_TOOLKIT:-}/scripts"
           # Cancelled before the toolkit was checked out: nothing to run with.
           # The watchdog remains the backstop for that window.
           [ -f "$T/lib/state.sh" ] || { echo "toolkit not checked out yet — leaving the issue to the watchdog"; exit 0; }
@@ -424,16 +465,22 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
+      - name: Move the toolkit out of the consumer worktree
+        run: |
+          mv "$GITHUB_WORKSPACE/.smallhours-toolkit" "$RUNNER_TEMP/smallhours-toolkit"
+          echo "SH_TOOLKIT=$RUNNER_TEMP/smallhours-toolkit" >> "$GITHUB_ENV"
       # cancel.sh sets mappable state labels — needs the consumer config.
-      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
-        with:
-          token: ${{ steps.token.outputs.token }}
+      - name: Install pinned yq, fetch consumer config
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          "$SH_TOOLKIT/scripts/consumer-config.sh"
       - env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
         run: |
           set -euo pipefail
-          T=.smallhours-toolkit/scripts
+          T="$SH_TOOLKIT/scripts"
           issue="${{ github.event.issue.number }}"
           if [ "${{ github.event.action }}" = "closed" ]; then
             # Only a mid-run close cancels. A normal merge closes from `in-review`.
@@ -476,13 +523,20 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
-      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
-        with:
-          token: ${{ steps.token.outputs.token }}
+      - name: Move the toolkit out of the consumer worktree
+        run: |
+          mv "$GITHUB_WORKSPACE/.smallhours-toolkit" "$RUNNER_TEMP/smallhours-toolkit"
+          echo "SH_TOOLKIT=$RUNNER_TEMP/smallhours-toolkit" >> "$GITHUB_ENV"
+      - name: Install pinned yq, fetch consumer config
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          "$SH_TOOLKIT/scripts/consumer-config.sh"
       - env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
-        run: .smallhours-toolkit/scripts/cancel.sh pr-closed "${{ github.event.pull_request.number }}"
+        run: |
+          "$SH_TOOLKIT/scripts/cancel.sh" pr-closed "${{ github.event.pull_request.number }}"
 
   # ── T7: formal "Request changes" review re-summons the agent ───────────────
   address_review:
@@ -511,18 +565,21 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
-      - name: Exclude the toolkit checkout from consumer commits
-        run: echo '/.smallhours-toolkit/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
+      - name: Move the toolkit out of the consumer worktree
+        run: |
+          mv "$GITHUB_WORKSPACE/.smallhours-toolkit" "$RUNNER_TEMP/smallhours-toolkit"
+          echo "SH_TOOLKIT=$RUNNER_TEMP/smallhours-toolkit" >> "$GITHUB_ENV"
       - name: Load pinned versions
-        run: grep -E '^[A-Z_][A-Z0-9_]*=' .smallhours-toolkit/versions.env >> "$GITHUB_ENV"
-      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
-        with:
-          token: ${{ steps.token.outputs.token }}
-          fetch-config: 'false'
+        run: grep -E '^[A-Z_][A-Z0-9_]*=' "$SH_TOOLKIT/versions.env" >> "$GITHUB_ENV"
+      # The consumer repo is checked out, so .smallhours.yml is already in the
+      # workspace (lib/config.sh's default path) — only yq is needed.
+      - name: Install pinned yq
+        run: |
+          "$SH_TOOLKIT/scripts/consumer-config.sh" --no-fetch-config
       - name: Provision sandbox (bubblewrap, Claude, managed settings)
         run: |
           set -euo pipefail
-          source .smallhours-toolkit/scripts/lib/claude-run.sh
+          source "$SH_TOOLKIT/scripts/lib/claude-run.sh"
           claude_run_provision
       - name: Address the requested changes, report usage
         env:
@@ -530,7 +587,7 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -euo pipefail
-          T=.smallhours-toolkit/scripts
+          T="$SH_TOOLKIT/scripts"
           pr="${{ github.event.pull_request.number }}"
           "$T/address-review.sh" "$pr" \
             "${{ github.event.review.state }}" "${{ github.event.review.user.login }}"
@@ -574,13 +631,20 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
-      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
-        with:
-          token: ${{ steps.token.outputs.token }}
+      - name: Move the toolkit out of the consumer worktree
+        run: |
+          mv "$GITHUB_WORKSPACE/.smallhours-toolkit" "$RUNNER_TEMP/smallhours-toolkit"
+          echo "SH_TOOLKIT=$RUNNER_TEMP/smallhours-toolkit" >> "$GITHUB_ENV"
+      - name: Install pinned yq, fetch consumer config
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          "$SH_TOOLKIT/scripts/consumer-config.sh"
       - env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
-        run: .smallhours-toolkit/scripts/reeval.sh "${{ github.event.pull_request.number }}"
+        run: |
+          "$SH_TOOLKIT/scripts/reeval.sh" "${{ github.event.pull_request.number }}"
 
   # ── T2 / T3' / T4: consumer CI outcome drives PR/issue state ───────────────
   # state-manager.sh decides; when it grants an auto-fix attempt it prints
@@ -613,17 +677,23 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
+      - name: Move the toolkit out of the consumer worktree
+        run: |
+          mv "$GITHUB_WORKSPACE/.smallhours-toolkit" "$RUNNER_TEMP/smallhours-toolkit"
+          echo "SH_TOOLKIT=$RUNNER_TEMP/smallhours-toolkit" >> "$GITHUB_ENV"
       # state-manager.sh sets mappable state/marker labels — needs the config.
-      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
-        with:
-          token: ${{ steps.token.outputs.token }}
+      - name: Install pinned yq, fetch consumer config
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          "$SH_TOOLKIT/scripts/consumer-config.sh"
       - id: sm
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           SMALLHOURS_CONFIG: ${{ runner.temp }}/smallhours-config.yml
         run: |
           set -euo pipefail
-          T=.smallhours-toolkit/scripts
+          T="$SH_TOOLKIT/scripts"
           case "${{ github.event.workflow_run.conclusion }}" in
             success) ci=success ;;
             *)       ci=failure ;;
@@ -675,18 +745,21 @@ jobs:
           repository: ${{ job.workflow_repository }}
           ref: ${{ job.workflow_sha }}
           path: .smallhours-toolkit
-      - name: Exclude the toolkit checkout from consumer commits
-        run: echo '/.smallhours-toolkit/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
+      - name: Move the toolkit out of the consumer worktree
+        run: |
+          mv "$GITHUB_WORKSPACE/.smallhours-toolkit" "$RUNNER_TEMP/smallhours-toolkit"
+          echo "SH_TOOLKIT=$RUNNER_TEMP/smallhours-toolkit" >> "$GITHUB_ENV"
       - name: Load pinned versions
-        run: grep -E '^[A-Z_][A-Z0-9_]*=' .smallhours-toolkit/versions.env >> "$GITHUB_ENV"
-      - uses: ./.smallhours-toolkit/.github/actions/consumer-config
-        with:
-          token: ${{ steps.token.outputs.token }}
-          fetch-config: 'false'
+        run: grep -E '^[A-Z_][A-Z0-9_]*=' "$SH_TOOLKIT/versions.env" >> "$GITHUB_ENV"
+      # The consumer repo is checked out, so .smallhours.yml is already in the
+      # workspace (lib/config.sh's default path) — only yq is needed.
+      - name: Install pinned yq
+        run: |
+          "$SH_TOOLKIT/scripts/consumer-config.sh" --no-fetch-config
       - name: Provision sandbox (bubblewrap, Claude, managed settings)
         run: |
           set -euo pipefail
-          source .smallhours-toolkit/scripts/lib/claude-run.sh
+          source "$SH_TOOLKIT/scripts/lib/claude-run.sh"
           claude_run_provision
       - name: Auto-fix the failing CI, report usage
         env:
@@ -694,7 +767,7 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -euo pipefail
-          T=.smallhours-toolkit/scripts
+          T="$SH_TOOLKIT/scripts"
           pr="${{ needs.ci_state.outputs.pr }}"
           "$T/auto-fix.sh" "$pr" "${{ needs.ci_state.outputs.attempt }}" \
             "${{ github.event.workflow_run.id }}"

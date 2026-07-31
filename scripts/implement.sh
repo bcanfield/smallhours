@@ -158,7 +158,15 @@ ${_SH_PUSH_ERR}
   # Clear unconditionally: a stale report from an earlier run in the same
   # RUNNER_TEMP would otherwise put a red-gate warning on a clean PR.
   rm -f "$vreport"
-  [ -n "$SH_VERIFY_FAILED" ] && printf '%s\n' "$SH_VERIFY_FAILED" > "$vreport"
+  if [ -n "$SH_VERIFY_FAILED" ]; then
+    # Marker line then body — the format is specified at sh_verify_report_path.
+    if [ -n "$SH_VERIFY_UNRESOLVED" ]; then
+      printf 'could-not-run %s\n\n' "$SH_VERIFY_UNRESOLVED" > "$vreport"
+    else
+      printf 'red\n\n' > "$vreport"
+    fi
+    printf '%s\n' "$SH_VERIFY_FAILED" >> "$vreport"
+  fi
 
   # Capture whatever the agent produced. It may have committed itself; if not,
   # commit the working tree so no work is lost. Either way the branch carries

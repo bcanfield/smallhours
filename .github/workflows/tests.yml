@@ -50,3 +50,111 @@ jobs:
 
       - name: Run test suites
         run: tests/run-all.sh
+
+  # The one thing run-all.sh structurally cannot check. Its suites are pure
+  # logic by contract — no network, no sudo — and they prove the verify gate's
+  # shell handling against fixtures we wrote. Whether a toolchain the AGENT
+  # bootstrapped is visible to the gate is a fact about the runner image's own
+  # startup files, and only a runner can answer it (ADR 0011).
+  #
+  # This is a standing guard, not a one-off measurement: a future runner image
+  # that stops sourcing ~/.bashrc from ~/.profile, or ships a ~/.bash_profile,
+  # would silently return every consumer to "the gate cannot see my toolchain"
+  # — the failure #29 was filed for, whose first symptom was a wasted agent run.
+  gate-environment:
+    name: Verify gate sees an agent-bootstrapped toolchain
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load pinned versions
+        run: grep -E '^[A-Z_][A-Z0-9_]*=' versions.env >> "$GITHUB_ENV"
+
+      - name: Install pinned yq
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/yq \
+            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
+          sudo install -m 0755 /tmp/yq /usr/local/bin/yq
+
+      # Both idioms every ecosystem's installer uses, appended BELOW ~/.bashrc's
+      # interactivity guard exactly where pnpm, bun, cargo, nvm and sdkman put
+      # theirs. Nothing here is node-specific: one is a PATH entry, the other a
+      # shell function, and a fix that only handled the first would quietly
+      # exclude every function-based version manager.
+      - name: Bootstrap a toolchain the way an agent would
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/probe/bin"
+          printf '#!/bin/sh\necho path-tool ran\n' > "$HOME/.local/probe/bin/probe-path-tool"
+          chmod +x "$HOME/.local/probe/bin/probe-path-tool"
+          cat >> "$HOME/.bashrc" <<'EOF'
+
+          # probe (smallhours gate-environment)
+          export PROBE_HOME="$HOME/.local/probe"
+          case ":$PATH:" in
+            *":$PROBE_HOME/bin:"*) ;;
+            *) export PATH="$PROBE_HOME/bin:$PATH" ;;
+          esac
+          probe_fn_tool() { echo "fn-tool ran"; }
+          EOF
+
+      # Evidence for the log, whatever the assertions do. `bash -lc` — the
+      # obvious one-word fix, and the one #29 proposed — is expected to resolve
+      # NOTHING: ~/.bashrc returns at its first line when non-interactive, which
+      # is above where every installer appends.
+      - name: Record what each shell form resolves
+        run: |
+          set -uo pipefail
+          for form in "-c" "-lc" "-ic" "-lic"; do
+            p="$(bash $form 'command -v probe-path-tool >/dev/null && echo yes || echo no' 2>/dev/null)"
+            f="$(bash $form 'type -t probe_fn_tool >/dev/null 2>&1 && echo yes || echo no' 2>/dev/null)"
+            printf 'bash %-5s  PATH entry: %-3s  shell function: %s\n' "$form" "$p" "$f"
+          done
+
+      - name: The gate must see both, and must say so when it sees neither
+        run: |
+          set -euo pipefail
+          . scripts/lib/verify.sh
+
+          probe() { # name config-body -> sets FAILED / UNRESOLVED
+            printf '%s\n' "$2" > "$RUNNER_TEMP/probe.yml"
+            SMALLHOURS_CONFIG="$RUNNER_TEMP/probe.yml" \
+              verify_gate "$RUNNER_TEMP/probe-$1.json" || true
+          }
+          rc=0
+
+          probe path 'version: 1
+          verify: "probe-path-tool"
+          verify_reentries: 0'
+          if [ -n "$SH_VERIFY_FAILED" ]; then
+            echo "::error::a PATH entry added by ~/.bashrc is invisible to the verify gate"
+            echo "$SH_VERIFY_FAILED"; rc=1
+          else
+            echo "ok: PATH entry from ~/.bashrc resolves"
+          fi
+
+          probe fn 'version: 1
+          verify: "probe_fn_tool"
+          verify_reentries: 0'
+          if [ -n "$SH_VERIFY_FAILED" ]; then
+            echo "::error::a shell function defined in ~/.bashrc is invisible to the verify gate"
+            echo "$SH_VERIFY_FAILED"; rc=1
+          else
+            echo "ok: shell function from ~/.bashrc resolves"
+          fi
+
+          # Layer 2 on a real runner: an unresolvable command must be reported as
+          # "the gate could not run" and must NOT burn a Claude re-entry.
+          probe missing 'version: 1
+          verify: "probe-definitely-absent-tool"
+          verify_reentries: 2'
+          if [ "$SH_VERIFY_UNRESOLVED" = "probe-definitely-absent-tool" ]; then
+            echo "ok: an unresolvable command is classified as could-not-run"
+          else
+            echo "::error::unresolvable command was not classified (SH_VERIFY_UNRESOLVED='$SH_VERIFY_UNRESOLVED')"
+            rc=1
+          fi
+
+          exit "$rc"
