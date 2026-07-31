@@ -289,6 +289,19 @@ case "$r" in *"Split it"*)       ok "prescribes the only remedy there is" ;; *) 
 case "$r" in *'max_turns'*|*'.smallhours.yml'*) bad "names a knob that cannot fix a timeout: $r" ;; *) ok "names no config knob (the budget is not consumer-tunable)" ;; esac
 case "$r" in *"workflow logs"*)  bad "punts to the logs when the cause is known: $r" ;; *) ok "does not punt to the job log" ;; esac
 
+# Which give-ups mean "cut off while still progressing". This is the predicate
+# implement.sh preserves partial work on, and it was WRONG on first release:
+# scoped to error_timeout alone, it dropped a complete vertical slice when
+# mediamtx-connect#291 exhausted its TURN cap instead (101/100, 18 minutes,
+# $6.20, 15 files). Both allowances are the same event with different meters.
+case_banner "allowance exhaustion is recognised whichever meter runs out"
+[ "$(run claude_was_cut_off "$FIX/timeout.json")"   = "true" ]  && ok "error_timeout is a cut-off"        || bad "error_timeout not recognised"
+[ "$(run claude_was_cut_off "$FIX/max-turns.json")" = "true" ]  && ok "error_max_turns is a cut-off too"  || bad "error_max_turns NOT recognised — this is the #291 regression"
+[ "$(run claude_was_cut_off "$FIX/clean.json")"     = "false" ] && ok "a clean run is not a cut-off"      || bad "success misread as a cut-off"
+[ "$(run claude_was_cut_off "$FIX/partial.json")"   = "false" ] && ok "error_during_execution is a stop, not a cut-off" || bad "execution error misread as a cut-off"
+[ "$(run claude_was_cut_off "$FIX/empty.json")"     = "false" ] && ok "no result -> not a cut-off"        || bad "empty result misread"
+[ "$(run claude_was_cut_off "$FIX/nope.json")"      = "false" ] && ok "missing result file -> not a cut-off" || bad "missing file misread"
+
 echo
 echo "test-claude-run: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
