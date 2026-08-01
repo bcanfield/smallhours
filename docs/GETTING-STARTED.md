@@ -324,6 +324,16 @@ Point `verify` at checks that are **fast and need no services** — linters, typ
 checks, unit tests. The agent has no Docker, no browsers, and cannot bind a local
 port, so browser and integration suites belong in CI rather than in the gate.
 
+The command runs through a fully initialised login shell, so whatever the agent
+installed for itself is on `PATH` the same way it would be for you — including
+toolchains that register through a shell function, like `nvm` or `sdkman`. What
+it cannot see is anything that never outlived a single step of the run: a
+virtualenv activated in one command, a tool fetched into a scratch directory. If
+your command's own executable does not resolve, smallhours does **not** hand the
+error to the agent to "fix" — it says on the pull request that the gate could not
+run and that nothing was checked, because no amount of editing your code would
+make that command start.
+
 ## How the loop behaves
 
 Two signals drive every state change: **CI results** and **formal reviews**.

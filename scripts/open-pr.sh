@@ -73,22 +73,49 @@ main() {
     # branch nobody checked.
     local gate="" vreport; vreport="$(sh_verify_report_path)"
     if [ -s "$vreport" ]; then
+      local marker body headline
+      marker="$(head -n 1 "$vreport")"
+      body="$(tail -n +3 "$vreport")"
+      case "$marker" in
+        # The gate never started, so NOTHING here was checked — the opposite of
+        # what a red-gate warning says. The remedy is the maintainer's, not the
+        # agent's, and this is the surface they actually read. Deliberately
+        # names no package manager: the fix is the same shape in every
+        # ecosystem, and a node-flavoured example would read as inapplicable to
+        # everyone else.
+        could-not-run\ *)
+          headline="⚠️ **The verify gate could not run, so this branch was not checked.**
+\`${marker#could-not-run }\` did not resolve in the gate's shell. The gate runs your
+\`verify:\` command through a login shell on a fresh runner, which sees only what
+your shell startup files or the command itself put on \`PATH\` — a toolchain
+installed for a single step during the run is not there any more.
+
+Make the command resolve its own entry point (invoke it through a launcher the
+runner always has, by absolute path, or via a bootstrap step inside the command)
+and the gate will start checking this repo's work again. Until then CI is the
+only thing looking at these changes."
+          sh_log "open-pr: PR body says the verify gate could not run"
+          ;;
+        *)
+          headline="⚠️ **The verify gate was still failing when this branch was pushed.** smallhours
+re-entered the agent to repair it and the command did not go green, so CI is the
+next thing that will see it."
+          sh_log "open-pr: PR body carries a red verify-gate report"
+          ;;
+      esac
       gate="
 
 ---
 
-⚠️ **The verify gate was still failing when this branch was pushed.** smallhours
-re-entered the agent to repair it and the command did not go green, so CI is the
-next thing that will see it.
+${headline}
 
 <details><summary>Last output from the verify command</summary>
 
 \`\`\`
-$(cat "$vreport")
+${body}
 \`\`\`
 
 </details>"
-      sh_log "open-pr: PR body carries a red verify-gate report"
     fi
     pr="$(gh pr create --repo "$repo" \
       --draft --head "$branch" --base "$base" \
