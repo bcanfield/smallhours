@@ -100,6 +100,22 @@ jobs:
           probe_fn_tool() { echo "fn-tool ran"; }
           EOF
 
+      # The other direction, and the hazard `-l` brings (ADR 0011's table, last
+      # column): an entry the JOB ENVIRONMENT put on PATH, exactly how
+      # claude-run.sh installs `claude` itself. A login shell sources
+      # /etc/profile, which on Debian and Ubuntu ASSIGNS PATH rather than
+      # extending it — so the gate could lose what a bare `bash -c` would have
+      # kept, taking `npx` and `corepack` with it and breaking the remedy
+      # GETTING-STARTED documents. It survives on this image; only a runner can
+      # say that of the next one.
+      - name: Put a tool on PATH the way the job environment does
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/jobenv/bin"
+          printf '#!/bin/sh\necho jobenv-tool ran\n' > "$HOME/.local/jobenv/bin/probe-jobenv-tool"
+          chmod +x "$HOME/.local/jobenv/bin/probe-jobenv-tool"
+          echo "$HOME/.local/jobenv/bin" >> "$GITHUB_PATH"
+
       # Evidence for the log, whatever the assertions do — and the table in
       # ADR 0011 is only as good as its last run here.
       #
@@ -125,6 +141,12 @@ jobs:
           p="$(bash -lic "$src$probe" 2>/dev/null)"
           f="$(bash -lic "$src$fnprobe" 2>/dev/null)"
           printf 'bash -lic + . ~/.bashrc  PATH entry: %-3s  shell function: %s   <- what the gate runs\n' "$p" "$f"
+
+          # Third column of the ADR 0011 table: does an entry the job env put on
+          # PATH survive /etc/profile's assignment under `-l`?
+          jobenv='command -v probe-jobenv-tool >/dev/null && echo yes || echo no'
+          printf '\ninherited job-env PATH entry — bash -c: %s   gate form: %s\n' \
+            "$(bash -c "$jobenv" 2>/dev/null)" "$(bash -lic "$src$jobenv" 2>/dev/null)"
           printf '\ncommand_not_found_handle defined in an interactive shell: %s\n' \
             "$(bash -ic 'type -t command_not_found_handle || echo no' 2>/dev/null)"
 
@@ -150,10 +172,14 @@ jobs:
 
           . scripts/lib/verify.sh
 
-          probe() { # name config-body -> sets FAILED / UNRESOLVED
+          # Keeps each probe's log as well as its variables: the diagnostic
+          # (ADR 0012) says nothing through SH_VERIFY_*, and one of its lines is
+          # an assertion below.
+          probe() { # name config-body -> sets FAILED / UNRESOLVED, writes probe-$1.err
             printf '%s\n' "$2" > "$RUNNER_TEMP/probe.yml"
             SMALLHOURS_CONFIG="$RUNNER_TEMP/probe.yml" \
-              verify_gate "$RUNNER_TEMP/probe-$1.json" || true
+              verify_gate "$RUNNER_TEMP/probe-$1.json" 2> "$RUNNER_TEMP/probe-$1.err" || true
+            cat "$RUNNER_TEMP/probe-$1.err" >&2
           }
           rc=0
 
@@ -177,6 +203,20 @@ jobs:
             echo "ok: shell function from ~/.bashrc resolves"
           fi
 
+          # The gate must not LOSE what a plainer shell would have kept. Nothing
+          # asserted this until #29's remedy — invoke through a launcher the
+          # runner always has — made an inherited PATH the thing that remedy
+          # stands on.
+          probe jobenv 'version: 1
+          verify: "probe-jobenv-tool"
+          verify_reentries: 0'
+          if [ -n "$SH_VERIFY_FAILED" ]; then
+            echo "::error::the gate's login shell dropped a PATH entry the job environment set — /etc/profile is assigning PATH on this image"
+            echo "$SH_VERIFY_FAILED"; rc=1
+          else
+            echo "ok: a PATH entry inherited from the job environment survives"
+          fi
+
           # Layer 2 on a real runner: an unresolvable command must be reported as
           # "the gate could not run" and must NOT burn a Claude re-entry.
           probe missing 'version: 1
@@ -194,6 +234,21 @@ jobs:
             echo "--- command_not_found_handle: $(bash -ic 'type -t command_not_found_handle || echo undefined' 2>/dev/null) ---"
             rc=1
           fi
+          # The diagnostic's on-disk probe is what tells "the tool is here and we
+          # could not reach it" from "it was never here", and it only gets to say
+          # that if it FINISHES. This runner is bare; a consumer's carries a
+          # populated package store, so a budget that is already tight here has
+          # no chance there. Both previous versions of this probe failed exactly
+          # this way — the first cut off at 8s, the second finished with 3s to
+          # spare — and neither could have been caught by a fixture.
+          if grep -q "on disk: INCONCLUSIVE" "$RUNNER_TEMP/probe-missing.err"; then
+            echo "::error::the on-disk probe ran out of time on a BARE runner; it can no longer tell 'unreachable' from 'never existed' (ADR 0012)"
+            grep "diagnose:" "$RUNNER_TEMP/probe-missing.err" || true
+            rc=1
+          else
+            echo "ok: the on-disk probe finished inside its budget"
+          fi
+
           if [ -s "$RUNNER_TEMP/reentries" ]; then
             echo "::error::the gate re-entered on an environment fault — that is the wasted stage #29 exists to stop"
             rc=1

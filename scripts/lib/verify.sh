@@ -39,6 +39,11 @@ _sh_v_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # context, so it does not need the whole log to know what it did.
 SH_VERIFY_LOG_LINES="${SH_VERIFY_LOG_LINES:-200}"
 
+# Wall-clock ceiling on the on-disk probe in _verify_diagnose. Overridable only
+# so the suite can force the cut-short branch deterministically; no consumer has
+# a reason to set it.
+SH_VERIFY_PROBE_SECONDS="${SH_VERIFY_PROBE_SECONDS:-8}"
+
 # Set by verify_gate to the final red output, or empty when the gate passed or
 # none was configured. implement.sh writes it to sh_verify_report_path for
 # open-pr.sh to surface.
@@ -80,12 +85,154 @@ _verify_strip_shell_noise() { # log
   ' "$log" > "$tmp" && mv "$tmp" "$log"
 }
 
+# FULL SHELL INITIALISATION (ADR 0011), shared by the gate and by the probes
+# below, so a diagnostic can never describe a shell the command did not run in.
+# Why each piece is here is argued at the call site in verify_gate.
+_SH_VERIFY_SHELL_PREAMBLE='set +H
+[ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc" || true
+unset -f command_not_found_handle 2>/dev/null || true
+'
+
+# `timeout N` when the host has it, nothing when it does not — same degradation
+# claude-run.sh makes for the wall-clock budget. A probe is a nicety on a path
+# that has already failed; it must never be the reason a run hangs.
+_verify_timeout() { # seconds
+  if command -v timeout >/dev/null 2>&1; then printf 'timeout %s' "$1"; fi
+}
+
 # The executable bash reported as missing, or empty. Two passes rather than one
 # expression: the prefix bash puts in front (`bash: line 3:`, `bash: eval:
 # line 1:`) is not always there, and making it optional needs `\?`, which GNU sed
 # has and BSD sed does not — this suite runs on both.
 _verify_missing_command() { # log
   sed -n 's/: command not found$//p' "$1" | sed 's/.*: //' | tail -n 1
+}
+
+# Everything the runner can say about why one name did not resolve. Runs ONLY
+# when the gate never started, and writes only to the log — the pull request
+# gets a remedy, not a dump.
+#
+# It exists because the two mechanisms that produce this failure print the same
+# `command not found` and want opposite responses (#29). One is a toolchain that
+# lives on disk and no shell we run reaches, which would be ours to fix; the
+# other is a toolchain that never outlived the agent's own process, which no
+# shell can ever reach and which ADR 0012 answers with a contract instead. A
+# consumer's log now says which, on the first occurrence, instead of costing an
+# issue to work out.
+#
+# Language-neutral by construction: every probe is keyed on the missing name and
+# nothing else. Nothing here changes the outcome of the run.
+#
+# EVERY probe swallows its own failure. implement.sh runs `set -euo pipefail` and
+# sources this file, so a probe that exits non-zero — a killed `find`, an `ls` of
+# a directory that isn't there — would abort the run at the exact point where the
+# branch still has to be pushed and the PR still has to say what happened. A
+# diagnostic that stalls an issue is worse than no diagnostic at all.
+_verify_diagnose() { # missing
+  local missing="$1" path snap resolved found roots=() r tmo
+  tmo="$(_verify_timeout 10)" || true
+
+  sh_log "verify: diagnose: \`$missing\` did not resolve — what the gate could see:"
+
+  # 1. The gate's own PATH, from the same initialised shell the command ran in.
+  # Marker-prefixed rather than read off the last line: an interactive login
+  # shell prints `logout` on its way out, and that would otherwise BE the answer.
+  path="$(env -u GH_TOKEN -u GITHUB_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN \
+    bash -lic "${_SH_VERIFY_SHELL_PREAMBLE}"'printf "SH_PROBE_PATH=%s\n" "$PATH"' 2>/dev/null \
+    | sed -n 's/^SH_PROBE_PATH=//p' | tail -n 1)" || true
+  sh_log "verify: diagnose:   PATH = ${path:-<empty>}"
+
+  # 2. Does it exist on this machine at all? A fixed list of the places a
+  # self-bootstrapping toolchain lands, not $HOME. Symlinks count — a package
+  # manager's shim usually is one.
+  #
+  # `/usr/local/bin` alone, not `/usr/local`: on a hosted runner that tree
+  # carries whole toolchains and a depth-6 walk of it did not finish in EIGHT
+  # SECONDS on a BARE ubuntu-24.04 — measured by the gate-environment job, whose
+  # log timings are the record. Adding back `/usr/local/lib` cost 5s of the
+  # budget on the same bare runner and buys nothing: a globally installed tool
+  # puts its executable in `bin`, usually as a symlink into `lib`, and symlinks
+  # are matched. The budget has to survive a CONSUMER's runner, where ~/.cache
+  # and ~/.npm hold a populated package store and this probe is the only thing
+  # that can tell "unreachable" from "never existed".
+  #
+  # Bounded by its own watchdog rather than by `timeout`, which macOS does not
+  # ship: a consumer's package store holds hundreds of thousands of files, and a
+  # courtesy probe on an already-failed path must not be the slowest thing in the
+  # run.
+  for r in "$HOME/.local" "$HOME/.cache" "$HOME/.npm" "$HOME/.config" \
+           /usr/local/bin "$PWD"; do
+    [ -d "$r" ] && roots+=("$r")
+  done
+  found=""
+  local t0=$SECONDS cut=0
+  if [ "${#roots[@]}" -gt 0 ]; then
+    found="$( {
+      find "${roots[@]}" -maxdepth 6 -name "$missing" \( -type f -o -type l \) -print &
+      _f=$!
+      # >/dev/null matters: the watchdog would otherwise inherit the capture
+      # pipe, and the reader cannot see end-of-input until EVERY writer exits —
+      # so a search that finished in milliseconds would still cost the full
+      # timeout, every time.
+      ( sleep "$SH_VERIFY_PROBE_SECONDS"; kill "$_f" 2>/dev/null ) >/dev/null 2>&1 & _w=$!
+      wait "$_f"; kill "$_w" 2>/dev/null
+    } 2>/dev/null | head -n 5 )" || true
+  fi
+  # A search that ran out of time found nothing AND proved nothing, and the two
+  # must never read the same. "Not there" is what tells a consumer the failure is
+  # theirs to fix; a timeout that says it is the probe lying with a straight face.
+  local took=$(( SECONDS - t0 ))
+  [ "$took" -ge "$SH_VERIFY_PROBE_SECONDS" ] && cut=1
+  # The duration is part of what the probe SAYS, not something a reader derives
+  # from log timestamps: anything that buffers this output — a `cat` of captured
+  # stderr, an Actions log group — stamps every line at the same instant and the
+  # headroom becomes invisible. It is the only warning that the budget is about
+  # to stop sufficing, and a consumer's own log deserves it too.
+  if [ -n "$found" ]; then
+    sh_log "verify: diagnose:   on disk (${took}s): $(printf '%s' "$found" | tr '\n' ' ')"
+  elif [ "$cut" -eq 1 ]; then
+    sh_log "verify: diagnose:   on disk: INCONCLUSIVE — the search was cut off at ${SH_VERIFY_PROBE_SECONDS}s under ${roots[*]}"
+  else
+    sh_log "verify: diagnose:   on disk (${took}s of ${SH_VERIFY_PROBE_SECONDS}s): not found under ${roots[*]:-<no readable roots>}"
+  fi
+
+  # 3. Claude Code's shell snapshot, read-only and never depended on. ADR 0011
+  # rejected sourcing it for the gate; this only asks whether doing so WOULD have
+  # helped, which is the measurement ADR 0012's payoff trigger turns on. The
+  # snapshot is written once at session start, so a toolchain the agent fetched
+  # mid-session is not in it either — a `no` here is the expected answer, and a
+  # `yes` is the finding.
+  snap="$(ls -1t "$HOME"/.claude/shell-snapshots/* 2>/dev/null | head -n 1)" || true
+  if [ -z "$snap" ]; then
+    sh_log "verify: diagnose:   agent shell snapshot: none present"
+  else
+    # PATH is emptied first, so what comes back is what the SNAPSHOT provides and
+    # not what this process already had. Without that, a snapshot that fails to
+    # source at all still "resolves" everything on the ambient PATH, and the one
+    # question this probe exists to answer gets a confident wrong answer.
+    resolved="$($tmo env PATH= bash -c '. "$1" >/dev/null 2>&1; command -v "$2" || true' \
+      _ "$snap" "$missing" </dev/null 2>/dev/null | tail -n 1)" || true
+    if [ -n "$resolved" ]; then
+      sh_log "verify: diagnose:   agent shell snapshot: WOULD have resolved it, at $resolved"
+    else
+      sh_log "verify: diagnose:   agent shell snapshot: does not resolve it either"
+    fi
+  fi
+
+  # The one line a reader needs. Which of the two worlds this is decides whether
+  # anything is ours to fix at all — so a probe that could not finish gets its own
+  # verdict rather than borrowing the confident one.
+  if [ -n "$found" ] || [ -n "${resolved:-}" ]; then
+    sh_log "verify: diagnose: it EXISTS but no shell the gate can reach has it — \
+report this on smallhours#29; the gate could have run this."
+  elif [ "$cut" -eq 1 ]; then
+    sh_log "verify: diagnose: could not tell whether it exists here — the search did \
+not finish. Make the verify command resolve its own entry point (ADR 0012); if you \
+believe the tool IS on this runner, say so on smallhours#29."
+  else
+    sh_log "verify: diagnose: nothing on this runner provides it, so no shell could \
+have run it. Make the verify command resolve its own entry point (ADR 0012)."
+  fi
 }
 
 verify_gate() { # result_json
@@ -146,10 +293,7 @@ verify_gate() { # result_json
     # mangled before it ever ran.
     env -u GH_TOKEN -u GITHUB_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN \
       SH_VERIFY_CMD="$cmd" \
-      bash -lic 'set +H
-                 [ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc" || true
-                 unset -f command_not_found_handle 2>/dev/null || true
-                 _c="$SH_VERIFY_CMD"; unset SH_VERIFY_CMD; eval "$_c"' \
+      bash -lic "${_SH_VERIFY_SHELL_PREAMBLE}"'_c="$SH_VERIFY_CMD"; unset SH_VERIFY_CMD; eval "$_c"' \
       > "$log" 2>&1 || rc=$?
     _verify_strip_shell_noise "$log"
     if [ "$rc" -eq 0 ]; then
@@ -168,6 +312,7 @@ verify_gate() { # result_json
       if [ -n "$missing" ] && [ "$missing" = "$first" ]; then
         SH_VERIFY_UNRESOLVED="$missing"
         sh_log "verify: could not run — \`$missing\` is not on PATH; no re-entry, nothing was checked"
+        _verify_diagnose "$missing"
         break
       fi
     fi
