@@ -146,18 +146,22 @@ _verify_diagnose() { # missing
   # self-bootstrapping toolchain lands, not $HOME. Symlinks count — a package
   # manager's shim usually is one.
   #
-  # `/usr/local/bin` and `/usr/local/lib` rather than `/usr/local`: on a hosted
-  # runner that directory carries whole toolchains (`.ghcup`, `share`) and a
-  # depth-6 walk of it did not finish in EIGHT SECONDS on a bare
-  # ubuntu-24.04 — measured by the gate-environment job on this probe's first
-  # run. The two subdirectories that can hold an executable cost nothing.
+  # `/usr/local/bin` alone, not `/usr/local`: on a hosted runner that tree
+  # carries whole toolchains and a depth-6 walk of it did not finish in EIGHT
+  # SECONDS on a BARE ubuntu-24.04 — measured by the gate-environment job, whose
+  # log timings are the record. Adding back `/usr/local/lib` cost 5s of the
+  # budget on the same bare runner and buys nothing: a globally installed tool
+  # puts its executable in `bin`, usually as a symlink into `lib`, and symlinks
+  # are matched. The budget has to survive a CONSUMER's runner, where ~/.cache
+  # and ~/.npm hold a populated package store and this probe is the only thing
+  # that can tell "unreachable" from "never existed".
   #
   # Bounded by its own watchdog rather than by `timeout`, which macOS does not
   # ship: a consumer's package store holds hundreds of thousands of files, and a
   # courtesy probe on an already-failed path must not be the slowest thing in the
   # run.
   for r in "$HOME/.local" "$HOME/.cache" "$HOME/.npm" "$HOME/.config" \
-           /usr/local/bin /usr/local/lib "$PWD"; do
+           /usr/local/bin "$PWD"; do
     [ -d "$r" ] && roots+=("$r")
   done
   found=""

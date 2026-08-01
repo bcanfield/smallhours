@@ -172,10 +172,14 @@ jobs:
 
           . scripts/lib/verify.sh
 
-          probe() { # name config-body -> sets FAILED / UNRESOLVED
+          # Keeps each probe's log as well as its variables: the diagnostic
+          # (ADR 0012) says nothing through SH_VERIFY_*, and one of its lines is
+          # an assertion below.
+          probe() { # name config-body -> sets FAILED / UNRESOLVED, writes probe-$1.err
             printf '%s\n' "$2" > "$RUNNER_TEMP/probe.yml"
             SMALLHOURS_CONFIG="$RUNNER_TEMP/probe.yml" \
-              verify_gate "$RUNNER_TEMP/probe-$1.json" || true
+              verify_gate "$RUNNER_TEMP/probe-$1.json" 2> "$RUNNER_TEMP/probe-$1.err" || true
+            cat "$RUNNER_TEMP/probe-$1.err" >&2
           }
           rc=0
 
@@ -230,6 +234,21 @@ jobs:
             echo "--- command_not_found_handle: $(bash -ic 'type -t command_not_found_handle || echo undefined' 2>/dev/null) ---"
             rc=1
           fi
+          # The diagnostic's on-disk probe is what tells "the tool is here and we
+          # could not reach it" from "it was never here", and it only gets to say
+          # that if it FINISHES. This runner is bare; a consumer's carries a
+          # populated package store, so a budget that is already tight here has
+          # no chance there. Both previous versions of this probe failed exactly
+          # this way — the first cut off at 8s, the second finished with 3s to
+          # spare — and neither could have been caught by a fixture.
+          if grep -q "on disk: INCONCLUSIVE" "$RUNNER_TEMP/probe-missing.err"; then
+            echo "::error::the on-disk probe ran out of time on a BARE runner; it can no longer tell 'unreachable' from 'never existed' (ADR 0012)"
+            grep "diagnose:" "$RUNNER_TEMP/probe-missing.err" || true
+            rc=1
+          else
+            echo "ok: the on-disk probe finished inside its budget"
+          fi
+
           if [ -s "$RUNNER_TEMP/reentries" ]; then
             echo "::error::the gate re-entered on an environment fault — that is the wasted stage #29 exists to stop"
             rc=1
