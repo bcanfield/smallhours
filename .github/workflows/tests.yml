@@ -51,18 +51,18 @@ jobs:
       - name: Run test suites
         run: tests/run-all.sh
 
-  # The one thing run-all.sh structurally cannot check. Its suites are pure
-  # logic by contract — no network, no sudo — and they prove the verify gate's
-  # shell handling against fixtures we wrote. Whether a toolchain the AGENT
-  # bootstrapped is visible to the gate is a fact about the runner image's own
-  # startup files, and only a runner can answer it (ADR 0011).
+  # The one thing run-all.sh structurally cannot check. Its suites are pure logic
+  # by contract and prove the gate against fixtures we wrote; whether a tool the
+  # AGENT installed is visible to the gate is a fact about a real runner, and
+  # only a runner can answer it.
   #
-  # This is a standing guard, not a one-off measurement: a future runner image
-  # that stops sourcing ~/.bashrc from ~/.profile, or ships a ~/.bash_profile,
-  # would silently return every consumer to "the gate cannot see my toolchain"
-  # — the failure #29 was filed for, whose first symptom was a wasted agent run.
+  # A standing guard, not a one-off measurement. Every previous version of this
+  # mechanism was defeated by something no fixture modelled — a ~/.bash_profile
+  # on the image, a distro's command_not_found_handle, a login shell rebuilding
+  # PATH — and each one silently returned consumers to "the gate cannot see my
+  # toolchain", the failure #29 was filed for, first symptom a wasted agent run.
   gate-environment:
-    name: Verify gate sees an agent-bootstrapped toolchain
+    name: Verify gate sees the tools the agent installed
     runs-on: ubuntu-24.04
 
     steps:
@@ -78,36 +78,11 @@ jobs:
             "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
           sudo install -m 0755 /tmp/yq /usr/local/bin/yq
 
-      # Both idioms every ecosystem's installer uses, appended BELOW ~/.bashrc's
-      # interactivity guard exactly where pnpm, bun, cargo, nvm and sdkman put
-      # theirs. Nothing here is node-specific: one is a PATH entry, the other a
-      # shell function, and a fix that only handled the first would quietly
-      # exclude every function-based version manager.
-      - name: Bootstrap a toolchain the way an agent would
-        run: |
-          set -euo pipefail
-          mkdir -p "$HOME/.local/probe/bin"
-          printf '#!/bin/sh\necho path-tool ran\n' > "$HOME/.local/probe/bin/probe-path-tool"
-          chmod +x "$HOME/.local/probe/bin/probe-path-tool"
-          cat >> "$HOME/.bashrc" <<'EOF'
-
-          # probe (smallhours gate-environment)
-          export PROBE_HOME="$HOME/.local/probe"
-          case ":$PATH:" in
-            *":$PROBE_HOME/bin:"*) ;;
-            *) export PATH="$PROBE_HOME/bin:$PATH" ;;
-          esac
-          probe_fn_tool() { echo "fn-tool ran"; }
-          EOF
-
-      # The other direction, and the hazard `-l` brings (ADR 0011's table, last
-      # column): an entry the JOB ENVIRONMENT put on PATH, exactly how
-      # claude-run.sh installs `claude` itself. A login shell sources
-      # /etc/profile, which on Debian and Ubuntu ASSIGNS PATH rather than
-      # extending it — so the gate could lose what a bare `bash -c` would have
-      # kept, taking `npx` and `corepack` with it and breaking the remedy
-      # GETTING-STARTED documents. It survives on this image; only a runner can
-      # say that of the next one.
+      # The other half of what the gate must see: an entry the JOB ENVIRONMENT put
+      # on PATH, exactly how claude-run.sh installs `claude` itself. Trivially
+      # true for the plain shell the gate runs today, and asserted anyway —
+      # ADR 0011's login shell lost exactly this on some images, and the next
+      # change to the gate's shell should fail here rather than at a consumer.
       - name: Put a tool on PATH the way the job environment does
         run: |
           set -euo pipefail
@@ -116,41 +91,7 @@ jobs:
           chmod +x "$HOME/.local/jobenv/bin/probe-jobenv-tool"
           echo "$HOME/.local/jobenv/bin" >> "$GITHUB_PATH"
 
-      # Evidence for the log, whatever the assertions do — and the table in
-      # ADR 0011 is only as good as its last run here.
-      #
-      # Two rows carry the argument. `bash -lc` is the obvious one-word fix and
-      # the one #29 proposed: it resolves NOTHING, because ~/.bashrc returns at
-      # its first line when non-interactive, above where every installer
-      # appends. And bare `bash -lic` resolves nothing EITHER on this image —
-      # the runner user has a ~/.bash_profile, which shadows the ~/.profile that
-      # would otherwise have sourced ~/.bashrc. Only the last row, which is what
-      # the gate actually runs, works. Delete the explicit source and the gate
-      # silently goes back to seeing nothing.
-      - name: Record what each shell form resolves
-        run: |
-          set -uo pipefail
-          probe='command -v probe-path-tool >/dev/null && echo yes || echo no'
-          fnprobe='type -t probe_fn_tool >/dev/null 2>&1 && echo yes || echo no'
-          src='[ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc" || true; '
-          for form in "-c" "-lc" "-ic" "-lic"; do
-            p="$(bash $form "$probe" 2>/dev/null)"
-            f="$(bash $form "$fnprobe" 2>/dev/null)"
-            printf 'bash %-5s              PATH entry: %-3s  shell function: %s\n' "$form" "$p" "$f"
-          done
-          p="$(bash -lic "$src$probe" 2>/dev/null)"
-          f="$(bash -lic "$src$fnprobe" 2>/dev/null)"
-          printf 'bash -lic + . ~/.bashrc  PATH entry: %-3s  shell function: %s   <- what the gate runs\n' "$p" "$f"
-
-          # Third column of the ADR 0011 table: does an entry the job env put on
-          # PATH survive /etc/profile's assignment under `-l`?
-          jobenv='command -v probe-jobenv-tool >/dev/null && echo yes || echo no'
-          printf '\ninherited job-env PATH entry — bash -c: %s   gate form: %s\n' \
-            "$(bash -c "$jobenv" 2>/dev/null)" "$(bash -lic "$src$jobenv" 2>/dev/null)"
-          printf '\ncommand_not_found_handle defined in an interactive shell: %s\n' \
-            "$(bash -ic 'type -t command_not_found_handle || echo no' 2>/dev/null)"
-
-      - name: The gate must see both, and must say so when it sees neither
+      - name: The gate sees the tool directory, and says so when it can see nothing
         env:
           # A stub `claude`, so a FAILED classification shows up as "it
           # re-entered" instead of killing the step on a missing OAuth token.
@@ -182,26 +123,6 @@ jobs:
             cat "$RUNNER_TEMP/probe-$1.err" >&2
           }
           rc=0
-
-          probe path 'version: 1
-          verify: "probe-path-tool"
-          verify_reentries: 0'
-          if [ -n "$SH_VERIFY_FAILED" ]; then
-            echo "::error::a PATH entry added by ~/.bashrc is invisible to the verify gate"
-            echo "$SH_VERIFY_FAILED"; rc=1
-          else
-            echo "ok: PATH entry from ~/.bashrc resolves"
-          fi
-
-          probe fn 'version: 1
-          verify: "probe_fn_tool"
-          verify_reentries: 0'
-          if [ -n "$SH_VERIFY_FAILED" ]; then
-            echo "::error::a shell function defined in ~/.bashrc is invisible to the verify gate"
-            echo "$SH_VERIFY_FAILED"; rc=1
-          else
-            echo "ok: shell function from ~/.bashrc resolves"
-          fi
 
           # ADR 0014, and the reason this job exists at all: everything else on
           # PATH is unwritable inside the sandbox, so the tool directory is the
@@ -271,21 +192,6 @@ jobs:
             echo "--- command_not_found_handle: $(bash -ic 'type -t command_not_found_handle || echo undefined' 2>/dev/null) ---"
             rc=1
           fi
-          # The diagnostic's on-disk probe is what tells "the tool is here and we
-          # could not reach it" from "it was never here", and it only gets to say
-          # that if it FINISHES. This runner is bare; a consumer's carries a
-          # populated package store, so a budget that is already tight here has
-          # no chance there. Both previous versions of this probe failed exactly
-          # this way — the first cut off at 8s, the second finished with 3s to
-          # spare — and neither could have been caught by a fixture.
-          if grep -q "on disk: INCONCLUSIVE" "$RUNNER_TEMP/probe-missing.err"; then
-            echo "::error::the on-disk probe ran out of time on a BARE runner; it can no longer tell 'unreachable' from 'never existed' (ADR 0012)"
-            grep "diagnose:" "$RUNNER_TEMP/probe-missing.err" || true
-            rc=1
-          else
-            echo "ok: the on-disk probe finished inside its budget"
-          fi
-
           if [ -s "$RUNNER_TEMP/reentries" ]; then
             echo "::error::the gate re-entered on an environment fault — that is the wasted stage #29 exists to stop"
             rc=1
