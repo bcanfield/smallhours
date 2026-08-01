@@ -1,7 +1,10 @@
 # 0011 — The verify gate runs in the agent's shell, and says so when it cannot run at all
 
 **Date:** 2026-07-31
-**Status:** Accepted
+**Status:** Accepted. Decision 1's reach is bounded by
+[ADR 0012](0012-gate-environment-is-the-runners.md), which found that a toolchain
+the agent never wrote to disk is beyond any shell — the decisions below stand
+unchanged.
 
 ## Context
 
@@ -54,13 +57,20 @@ Ubuntu's stock `~/.profile` sources `~/.bashrc`; any file that shadows
 Measured on `ubuntu-24.04` by the `gate-environment` job, against a toolchain
 bootstrapped the way an agent bootstraps one:
 
-| form | PATH entry from `~/.bashrc` | shell function from `~/.bashrc` |
-|---|---|---|
-| `bash -c` | no | no |
-| `bash -lc` | **no** | **no** |
-| `bash -ic` | yes | yes |
-| `bash -lic` | **no** | **no** |
-| `bash -lic` + explicit `. ~/.bashrc` | yes | yes |
+| form | PATH entry from `~/.bashrc` | shell function from `~/.bashrc` | PATH entry inherited from the job env |
+|---|---|---|---|
+| `bash -c` | no | no | yes |
+| `bash -lc` | **no** | **no** | — |
+| `bash -ic` | yes | yes | — |
+| `bash -lic` | **no** | **no** | — |
+| `bash -lic` + explicit `. ~/.bashrc` | yes | yes | yes |
+
+The last column is the hazard `-l` brings: Debian and Ubuntu's `/etc/profile`
+**assigns** `PATH` rather than extending it, so a login shell can drop what the
+job environment put there — including the `$HOME/.local/bin` entry
+`claude-run.sh` adds for `claude` itself, and any `npx`/`corepack` the gate's own
+documented remedy depends on. It survives on this image; the job asserts it,
+because nothing but a measurement can say that of the next image.
 
 The fourth row is the one to remember. **The hosted runner's user has a
 `~/.bash_profile`**, so the login shell never reaches `~/.profile` and never

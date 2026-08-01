@@ -308,7 +308,7 @@ reads those; it will not guess your package manager.
 and before the pull request opens:
 
 ```yaml
-verify: pnpm verify
+verify: corepack pnpm run verify
 verify_reentries: 2
 ```
 
@@ -324,15 +324,27 @@ Point `verify` at checks that are **fast and need no services** — linters, typ
 checks, unit tests. The agent has no Docker, no browsers, and cannot bind a local
 port, so browser and integration suites belong in CI rather than in the gate.
 
-The command runs through a fully initialised login shell, so whatever the agent
-installed for itself is on `PATH` the same way it would be for you — including
-toolchains that register through a shell function, like `nvm` or `sdkman`. What
-it cannot see is anything that never outlived a single step of the run: a
-virtualenv activated in one command, a tool fetched into a scratch directory. If
-your command's own executable does not resolve, smallhours does **not** hand the
-error to the agent to "fix" — it says on the pull request that the gate could not
-run and that nothing was checked, because no amount of editing your code would
-make that command start.
+**Write a command that resolves its own entry point.** The gate's shell is the
+runner's, not the agent's: it is a fully initialised login shell, so a toolchain
+whose installer wrote to a shell startup file is on `PATH` — including ones that
+register through a shell function, like `nvm` or `sdkman`. What it cannot see is
+anything that never outlived the agent's own process: a tool fetched per command,
+a virtualenv activated in one call. That is the common case, not the exotic one,
+so invoke through something the runner is guaranteed to have — `corepack` or
+`npx` (both ship with node), `./mvnw`, `./gradlew`, `uv run`, `make` — or by
+absolute path, or bootstrap the toolchain inside the command itself.
+
+`corepack pnpm` rather than `npx --yes pnpm@11.17.0` in the example above because
+corepack takes the version from your `packageManager` field, and a hand-copied
+version drifts the day a bot bumps one and not the other. Where corepack is
+absent, `npx --yes <manager>@<version> run verify` is the fallback. Same shape
+everywhere: the launcher is guaranteed, the toolchain is not.
+
+If your command's own executable does not resolve, smallhours does **not** hand
+the error to the agent to "fix" — it says on the pull request that the gate could
+not run and that nothing was checked, because no amount of editing your code
+would make that command start, and the run log records what the gate could and
+could not see. See [ADR 0012](adr/0012-gate-environment-is-the-runners.md).
 
 ## How the loop behaves
 

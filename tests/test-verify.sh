@@ -75,6 +75,7 @@ gate "$FIX/green.yml"
 [ "$GATE_RC" -eq 0 ] && ok "returns 0" || bad "returned $GATE_RC"
 case "$OUT" in *"verify: green"*) ok "logs green" ;; *) bad "no green log: $OUT" ;; esac
 case "$FAILED" in '') ok "SH_VERIFY_FAILED is empty, so the PR body stays clean" ;; *) bad "reported a failure on a green gate: $FAILED" ;; esac
+case "$OUT" in *diagnose*) bad "diagnosed an environment that worked: $OUT" ;; *) ok "no diagnostic — there is nothing to explain" ;; esac
 case "$(wc -l < "$ARGV" | tr -d ' ')" in 0) ok "never re-enters" ;; *) bad "re-entered on a green gate" ;; esac
 
 case_banner "permanently red gate, default 2 re-entries"
@@ -89,6 +90,9 @@ if grep -q -- '--continue' "$ARGV"; then ok "re-entry resumes the session (--con
 if grep -q -- '--max-turns 30' "$ARGV"; then ok "re-entry uses the verify_reentry turn cap, not implement's"; else bad "wrong turn cap: $(cat "$ARGV")"; fi
 case "$FAILED" in *boom-marker*) ok "SH_VERIFY_FAILED carries the command output" ;; *) bad "no output captured: $FAILED" ;; esac
 case "$OUT" in *"CI is the backstop"*) ok "says plainly that it is pushing anyway" ;; *) bad "no push-anyway log: $OUT" ;; esac
+# A gate that RAN and failed is the agent's problem, not the environment's — a
+# PATH dump here would send the reader looking in the wrong place.
+case "$OUT" in *diagnose*) bad "blamed the environment for a gate that ran: $OUT" ;; *) ok "no diagnostic on a genuinely red gate" ;; esac
 
 case_banner "verify_reentries: 0 — gate runs, never re-enters"
 printf 'version: 1\nverify: "exit 1"\nverify_reentries: 0\n' > "$FIX/zero.yml"
@@ -156,7 +160,12 @@ case_banner "the gate could not run — the command's own executable is missing"
 # turns and $2.22 rewriting code that was already correct. The agent cannot
 # change the shell the gate runs in, so re-entry can never succeed here.
 printf 'version: 1\nverify: "sh-no-such-tool-xyz --check"\n' > "$FIX/unres.yml"
-gate "$FIX/unres.yml"
+# An empty HOME, so the on-disk probe searches only small system roots and
+# reaches a verdict rather than timing out on whatever this machine keeps in
+# ~/.npm — the assertion below is about which verdict, not about how fast the
+# developer's package cache is.
+mkdir -p "$FIX/home-clean"
+gate "$FIX/unres.yml" "$FIX/home-clean"
 [ "$GATE_RC" -eq 0 ] && ok "returns 0 — an unrunnable gate never stalls the issue" || bad "returned $GATE_RC"
 case "$(wc -l < "$ARGV" | tr -d ' ')" in
   0) ok "never re-enters — no Claude stage is spent on an environment fault" ;;
@@ -169,6 +178,81 @@ case "$UNRESOLVED" in
 esac
 case "$OUT" in *"could not run"*) ok "log says the gate could not run, not that the code failed" ;; *) bad "no could-not-run log: $OUT" ;; esac
 case "$FAILED" in *'exited 127'*) ok "report still carries the command and its exit status" ;; *) bad "no report body: $FAILED" ;; esac
+# ADR 0012 decision 2. A tool that is nowhere on this machine could not have been
+# run by ANY shell, so nothing here is ours to fix — the log has to say that,
+# because the message is identical to the case below where it is.
+case "$OUT" in *"diagnose:   PATH ="*) ok "diagnostic records the gate's own PATH" ;; *) bad "no PATH probe: $OUT" ;; esac
+case "$OUT" in
+  *"nothing on this runner provides it"*) ok "says the toolchain never existed here, so no shell could have run it" ;;
+  *"EXISTS but no shell"*) bad "claimed the tool exists when nothing was planted: $OUT" ;;
+  *) bad "no verdict line in the diagnostic: $OUT" ;;
+esac
+
+case_banner "the diagnostic tells 'exists but unreachable' from 'never existed'"
+# The distinction the whole of #29 turned on, and the one the two mechanisms
+# cannot be told apart by: both print the same `command not found`. A tool on
+# disk but on no PATH is a gate we COULD have run — ADR 0012's payoff trigger.
+mkdir -p "$FIX/home-planted/.local/share/probe-bin"
+printf '#!/bin/sh\nexit 0\n' > "$FIX/home-planted/.local/share/probe-bin/sh-planted-tool-xyz"
+chmod +x "$FIX/home-planted/.local/share/probe-bin/sh-planted-tool-xyz"
+printf 'version: 1\nverify: "sh-planted-tool-xyz"\nverify_reentries: 0\n' > "$FIX/planted.yml"
+gate "$FIX/planted.yml" "$FIX/home-planted"
+case "$UNRESOLVED" in sh-planted-tool-xyz) ok "still classified as could-not-run" ;; *) bad "not classified: '$UNRESOLVED'" ;; esac
+case "$OUT" in
+  *"on disk ("*"$FIX/home-planted/.local/share/probe-bin/sh-planted-tool-xyz"*)
+    ok "names where the tool actually is, and how long looking took" ;;
+  *) bad "the on-disk probe did not find a planted tool: $OUT" ;;
+esac
+case "$OUT" in
+  *"EXISTS but no shell"*) ok "verdict says the gate could have run this — the case that is ours" ;;
+  *) bad "wrong verdict for a tool that is on disk: $OUT" ;;
+esac
+case "$(wc -l < "$ARGV" | tr -d ' ')" in 0) ok "diagnosing costs no Claude re-entry" ;; *) bad "re-entered while diagnosing" ;; esac
+
+case_banner "a search that ran out of time says so instead of claiming absence"
+# The gate-environment job caught this on the probe's first run: a depth-6 walk
+# of /usr/local did not finish in 8s on a BARE ubuntu-24.04, so the probe
+# reported "not found" having proved nothing — and the verdict line went on to
+# tell the consumer the failure was theirs. A timeout and an absence must never
+# read the same, because only one of them is evidence.
+export SH_VERIFY_PROBE_SECONDS=0
+gate "$FIX/unres.yml" "$FIX/home-planted"
+unset SH_VERIFY_PROBE_SECONDS
+case "$OUT" in
+  *"on disk: INCONCLUSIVE"*) ok "says the search was cut off, not that the tool is absent" ;;
+  *"not found under"*) bad "a cut-off search claimed the tool does not exist: $OUT" ;;
+  *) bad "no on-disk line at all: $OUT" ;;
+esac
+case "$OUT" in
+  *"could not tell whether it exists here"*) ok "verdict withholds judgement rather than blaming the consumer" ;;
+  *"nothing on this runner provides it"*) bad "drew the confident verdict from an unfinished search: $OUT" ;;
+  *) bad "no verdict line: $OUT" ;;
+esac
+case "$UNRESOLVED" in sh-no-such-tool-xyz) ok "classification is unaffected by the probe's outcome" ;; *) bad "classification changed: '$UNRESOLVED'" ;; esac
+
+case_banner "diagnosing never aborts the run"
+# implement.sh runs `set -euo pipefail` and sources this file, so a probe that
+# exits non-zero — a killed `find`, an `ls` of a directory that is not there —
+# would kill the stage at the one moment the branch still has to be pushed and
+# the PR still has to explain itself. The failure would look like a crash, not a
+# missing log line, which is why it is worth a case of its own.
+printf 'version: 1\nverify: "sh-no-such-tool-xyz"\nverify_reentries: 0\n' > "$FIX/strict.yml"
+STRICT_OUT="$(
+  PATH="$FIX/bin:$PATH" SH_TEST_CLAUDE_ARGV="$FIX/argv.strict" \
+  SMALLHOURS_CONFIG="$FIX/strict.yml" CLAUDE_CODE_OAUTH_TOKEN=stub \
+  SMALLHOURS_JOB_CAP_MINUTES= HOME="$FIX/home-planted" \
+  bash -c '
+    set -euo pipefail
+    unset GITHUB_WORKSPACE
+    . "$1" 2>/dev/null || exit 90
+    verify_gate "$2" 2>/dev/null
+    printf "SURVIVED"
+  ' _ "$V" "$FIX/strict-result.json" 2>/dev/null
+)"
+case "$STRICT_OUT" in
+  SURVIVED) ok "the caller keeps running under set -euo pipefail" ;;
+  *) bad "the diagnostic aborted a strict-mode caller — the push would never happen" ;;
+esac
 
 case_banner "a distro's command-not-found handler does not defeat the classification"
 # `-i` pulls in /etc/bash.bashrc, where Debian and Ubuntu define
