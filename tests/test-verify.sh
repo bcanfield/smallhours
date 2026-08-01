@@ -209,6 +209,26 @@ case "$OUT" in
 esac
 case "$(wc -l < "$ARGV" | tr -d ' ')" in 0) ok "diagnosing costs no Claude re-entry" ;; *) bad "re-entered while diagnosing" ;; esac
 
+case_banner "a hit inside a launcher's cache is the contract case, not ours"
+# The exact path mediamtx-connect#306 produced: `npx pnpm` downloads pnpm into
+# ~/.npm/_npx/<hash>/node_modules/.bin and runs it from there. The file exists,
+# but that directory was on nobody's PATH — not the gate's, not the agent's.
+# Reading it as "we failed to reach your toolchain" would fire ADR 0012's payoff
+# trigger for every npx-based consumer, which is most of them.
+mkdir -p "$FIX/home-npx/.npm/_npx/acaf29b40d536b0e/node_modules/.bin"
+printf '#!/bin/sh\nexit 0\n' > "$FIX/home-npx/.npm/_npx/acaf29b40d536b0e/node_modules/.bin/sh-planted-tool-xyz"
+chmod +x "$FIX/home-npx/.npm/_npx/acaf29b40d536b0e/node_modules/.bin/sh-planted-tool-xyz"
+gate "$FIX/planted.yml" "$FIX/home-npx"
+case "$OUT" in
+  *"on disk ("*"_npx/acaf29b40d536b0e"*) ok "still reports where it found it" ;;
+  *) bad "did not report the cached copy: $OUT" ;;
+esac
+case "$OUT" in
+  *"found only inside a package cache"*) ok "verdict names it as the per-invocation case" ;;
+  *"EXISTS but no shell"*) bad "blamed the gate for a file in an npx cache: $OUT" ;;
+  *) bad "no verdict line: $OUT" ;;
+esac
+
 case_banner "a search that ran out of time says so instead of claiming absence"
 # The gate-environment job caught this on the probe's first run: a depth-6 walk
 # of /usr/local did not finish in 8s on a BARE ubuntu-24.04, so the probe

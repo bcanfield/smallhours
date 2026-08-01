@@ -34,14 +34,30 @@ The remaining candidate was sourcing Claude Code's shell snapshot
 undocumented internal and worth reconsidering if it were the only thing that
 reaches a process-local `PATH`.
 
-**By inspection it is not, and this reasoning is not yet backed by a measurement
-on a runner** — which is what decision 2 below exists to obtain. A snapshot is
-written once, at session start, and holds the `PATH` and functions that existed
-*then*. A toolchain the agent fetches during its session is not in it. Worse, a
-per-call route — `corepack pnpm …`, `npx pnpm`, an absolute path, an
-`export PATH=… && pnpm …` compound inside a single Bash call — leaves nothing in
-any environment at all, snapshot included. The most faithful artefact available
-is faithful to the wrong instant.
+It is not, and the runner is now the authority rather than this reasoning.
+Decision 2's diagnostic ran on a real agent run (mediamtx-connect#306, on
+v0.5.12) and reported:
+
+```
+on disk (0s): /home/runner/.npm/_npx/acaf29b40d536b0e/node_modules/.bin/pnpm
+agent shell snapshot: none present
+```
+
+Two findings, both stronger than what was argued here before them.
+
+**The mechanism is a per-invocation launcher.** The agent reaches pnpm through
+`npx pnpm`, which downloads it into a hash-keyed cache under `~/.npm/_npx/` and
+runs it from there. Nothing is installed and nothing lands on `PATH` — not the
+gate's, and not the agent's own. The file on disk is a launcher's leavings, not
+a toolchain.
+
+**The snapshot does not exist.** Claude Code 2.1.212 under `claude -p` left
+nothing at `~/.claude/shell-snapshots/` on the runner. ADR 0011 rejected that
+option for depending on an undocumented internal; the measured answer is
+stronger — in a headless run there is no artefact to source. Its reasoning was
+right anyway: a snapshot is written once, at session start, and holds the `PATH`
+and functions that existed *then*, so a toolchain fetched mid-session would not
+be in it even where one is written.
 
 Chasing further fidelity means chasing a process that has already exited, through
 internals no contract promises. The alternative is to stop chasing and say what
@@ -68,18 +84,25 @@ each keyed only on the missing name: the initialised shell's `PATH`; a bounded,
 depth- and time-capped search for the name on disk; and whether sourcing the
 newest Claude Code shell snapshot *would* have resolved it.
 
-Those separate the two worlds that produce an identical message — a toolchain
-that exists but no shell we run reaches (ours to fix) from one that never
-outlived the agent's process (the contract's) — and they settle the snapshot
-question with a measurement instead of the inference above. Log only: the pull
-request gets a remedy, not a dump.
+Those separate the worlds that produce an identical message, and they settled the
+snapshot question above with a measurement instead of an inference. Log only: the
+pull request gets a remedy, not a dump.
 
-The disk search is bounded by wall clock, so it has a **third** verdict: a search
-that was cut off says so and withholds judgement. Absence of evidence is what
-tells a consumer the failure is theirs to fix, and a timeout is not that. The
-`gate-environment` job established this is not hypothetical — a depth-6 walk of
-`/usr/local` did not finish in eight seconds on a *bare* runner, before any
-consumer's package store existed.
+The verdict has **four** answers, because the probe can honestly give four:
+
+- **Found somewhere a shell could have had it.** The only one that is ours, and
+  the only one that fires the payoff trigger below.
+- **Found only inside a package cache or dependency tree** — `_npx`, a corepack
+  cache, a content-addressed store, a `node_modules`. This is what a
+  per-invocation launcher leaves behind, and it was never on the agent's `PATH`
+  either. Matched by position, not by ecosystem: these are the names build tools
+  give directories they generate. Without this distinction the trigger fires for
+  every `npx`-based consumer — the shape #306 itself turned out to be.
+- **Cut off.** A bounded search that ran out of time proved nothing, and absence
+  of evidence is exactly what tells a consumer the failure is theirs. The
+  `gate-environment` job established this is not hypothetical: a depth-6 walk of
+  `/usr/local` did not finish in eight seconds on a *bare* runner.
+- **Absent.** Nothing on the machine provides it, so no shell could have run it.
 
 ## Consequences
 
@@ -119,6 +142,10 @@ consumer's package store existed.
 
 Revisit decision 1 if a diagnostic ever reports `it EXISTS but no shell the gate
 can reach has it` — that is the world where the gate could have run and did not,
-and it is ours to fix. Revisit decision 2's snapshot probe if it ever reports
-`WOULD have resolved it`, which would reopen ADR 0011's rejected alternative on
-evidence rather than inference.
+and it is ours to fix. A hit inside a launcher's cache is **not** that world and
+does not count; #306 fired the trigger that way once, before the verdict learned
+to tell them apart.
+
+Revisit decision 2's snapshot probe if it ever reports `WOULD have resolved it`,
+which would reopen ADR 0011's rejected alternative on evidence. On the runs
+measured so far it reports `none present`: `claude -p` writes no snapshot at all.
