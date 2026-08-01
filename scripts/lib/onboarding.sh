@@ -14,6 +14,11 @@ _SMALLHOURS_ONBOARDING_SH=1
 # requests R/W, Actions Read. No hook_attributes: the loop is Actions-driven,
 # not webhook-driven, and a manifest with a webhook would demand a URL — this
 # is the "webhook must be unchecked" tripwire, handled structurally here.
+#
+# `workflows` is ABSENT on purpose (ADR 0013). GitHub gates any push touching
+# `.github/workflows/*` on that permission separately from `contents: write`, so
+# such a change cannot land through the loop and is a human class. Adding it here
+# would not migrate existing installs either — every one would have to re-consent.
 ob_manifest_json() { # name homepage-url redirect-url
   jq -n --arg name "$1" --arg url "$2" --arg redirect "$3" '{
     name: $name,
