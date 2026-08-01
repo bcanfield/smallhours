@@ -317,6 +317,32 @@ gate "$FIX/nested.yml"
 case "$UNRESOLVED" in '') ok "not classified as could-not-run — the gate did start" ;; *) bad "wrongly blamed the environment for $UNRESOLVED" ;; esac
 case "$(wc -l < "$ARGV" | tr -d ' ')" in 1) ok "re-enters so the agent can install what its own command needs" ;; *) bad "expected 1 re-entry, got $(wc -l < "$ARGV" | tr -d ' ')" ;; esac
 
+case_banner "the tool directory the agent may write is on the gate's PATH (ADR 0014)"
+# The mechanism that replaces "your verify command must resolve its own entry
+# point": everything else on PATH is unwritable inside the sandbox, so this is
+# the only place an agent-installed tool can outlive its own process.
+# PREFIX is the single source of truth — BIN is derived from it, so the sandbox
+# path the agent may write and the PATH entry the gate adds can never diverge.
+export SMALLHOURS_TOOL_PREFIX="$FIX/tools"
+SMALLHOURS_TOOL_BIN="$SMALLHOURS_TOOL_PREFIX/bin"
+mkdir -p "$SMALLHOURS_TOOL_BIN"
+printf '#!/bin/sh\necho agent-installed-tool ran\n' > "$SMALLHOURS_TOOL_BIN/agent-tool"
+chmod +x "$SMALLHOURS_TOOL_BIN/agent-tool"
+printf 'version: 1\nverify: "agent-tool"\nverify_reentries: 0\n' > "$FIX/toolbin.yml"
+gate "$FIX/toolbin.yml" "$FIX/home-clean"
+case "$FAILED" in '') ok "a tool installed in the tool directory resolves" ;; *) bad "gate could not see it: $FAILED" ;; esac
+case "$OUT" in *"tools the agent installed: "*agent-tool*) ok "logs what the agent installed — the only review surface it has" ;; *) bad "no tool listing in the log: $OUT" ;; esac
+
+# The property `corepack pnpm run verify` lacked, and the one no fixture caught
+# until a consumer paid for it: a command that re-invokes a tool BY NAME must
+# resolve it too. PATH has to be exported, not merely resolved once.
+printf '#!/bin/sh\nagent-tool\n' > "$SMALLHOURS_TOOL_BIN/wrapper-tool-xyz"
+chmod +x "$SMALLHOURS_TOOL_BIN/wrapper-tool-xyz"
+printf 'version: 1\nverify: "wrapper-tool-xyz"\nverify_reentries: 0\n' > "$FIX/nested-tool.yml"
+gate "$FIX/nested-tool.yml" "$FIX/home-clean"
+case "$FAILED" in '') ok "a script in it that re-invokes another tool by name resolves too" ;; *) bad "children do not inherit the tool directory: $FAILED" ;; esac
+unset SMALLHOURS_TOOL_PREFIX
+
 case_banner "a toolchain on PATH only via shell startup files resolves"
 # The property #29 is about, stated without reference to any language: whatever
 # the agent bootstrapped for itself must be visible to the gate. Three HOME

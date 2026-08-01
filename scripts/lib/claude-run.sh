@@ -53,6 +53,42 @@ _SH_BASE_DOMAINS=(
 # succeeds, the store write is denied. Consumers pair it with
 # `sandbox.filesystem.allowWrite`; the store path is package-manager specific
 # (pnpm, npm, cargo, pip all differ), which is why the toolkit does not guess it.
+# ── The tool directory (ADR 0014) ────────────────────────────────────────────
+# The one place the agent may install a tool that outlives its own process.
+#
+# Everything on the runner's PATH is unwritable inside the sandbox — including
+# ~/.bashrc, so the agent cannot even add a directory of its own — which is why
+# it reaches for per-invocation launchers (`npx pnpm`) and why nothing it
+# installs was ever visible to the gate. This is that constraint's own solution:
+# one directory it MAY write, which the gate also has on PATH.
+#
+# Outside the worktree, like every other scratch path here, so `git add -A`
+# cannot commit it, it cannot reach a pull request, and ADR 0009's clean-tree
+# reasoning never sees it.
+# PREFIX is the single source of truth and BIN is derived, so the path the
+# sandbox opens for writing and the path the gate puts on PATH can never
+# disagree — a divergence would mean the agent installing somewhere the gate
+# does not look, which is the whole failure this replaces.
+#
+# Exported at definition, not only inside claude_run_tool_dir: the gate runs the
+# consumer's command in a CHILD shell, which inherits exported variables only,
+# and the gate can run in a process that never called claude_run.
+export SMALLHOURS_TOOL_PREFIX="${SMALLHOURS_TOOL_PREFIX:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/smallhours-tools}"
+export SMALLHOURS_TOOL_BIN="$SMALLHOURS_TOOL_PREFIX/bin"
+
+# Create it and put it on PATH for everything this process spawns — including
+# `claude`, whose sandboxed Bash commands inherit the parent environment, so the
+# agent's own calls resolve what it installed there. Idempotent: called per
+# stage, and a stage may run more than once in a job.
+claude_run_tool_dir() {
+  mkdir -p "$SMALLHOURS_TOOL_BIN"
+  export SMALLHOURS_TOOL_PREFIX SMALLHOURS_TOOL_BIN
+  case ":$PATH:" in
+    *":$SMALLHOURS_TOOL_BIN:"*) ;;
+    *) export PATH="$SMALLHOURS_TOOL_BIN:$PATH" ;;
+  esac
+}
+
 claude_run_render_settings() {
   local domains=("${_SH_BASE_DOMAINS[@]}") d
   while IFS= read -r d; do [ -n "$d" ] && domains+=("$d"); done < <(config_egress_extra_domains)
@@ -71,7 +107,8 @@ claude_run_render_settings() {
   allow_json="$(printf '%s\n' "${_SH_SANDBOX_MERGE_PATHS[@]}" | jq -R . | jq -s .)"
 
   jq -n --argjson domains "$domains_json" --arg ignore_scripts "$ignore_scripts" \
-        --argjson extra "$extra_json" --argjson allow "$allow_json" '
+        --argjson extra "$extra_json" --argjson allow "$allow_json" \
+        --arg tool_prefix "$SMALLHOURS_TOOL_PREFIX" '
     {
       env: { DISABLE_AUTOUPDATER: "1", NPM_CONFIG_IGNORE_SCRIPTS: $ignore_scripts },
       permissions: { deny: ["WebFetch", "WebSearch"] },
@@ -83,6 +120,10 @@ claude_run_render_settings() {
         autoAllowBashIfSandboxed: true,
         allowUnsandboxedCommands: false,
         allowManagedDomainsOnly: true,
+        # The ONE path this profile opens for writing on its own (ADR 0014).
+        # Consumer allowWrite entries merge on top by union below, so this
+        # cannot be dropped by a consumer naming a list of their own.
+        filesystem: { allowWrite: [ $tool_prefix ] },
         excludedCommands: [],
         enableWeakerNestedSandbox: false,
         network: {
@@ -236,6 +277,7 @@ claude_run() {
   local stage="$1" prompt_file="$2" out="$3" resume="${4:-}"
   [ -f "$prompt_file" ] || sh_die "claude_run: prompt file not found: $prompt_file"
   [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || sh_die "claude_run: CLAUDE_CODE_OAUTH_TOKEN not set"
+  claude_run_tool_dir
 
   local model max_turns budget
   model="$(config_model "$stage")"

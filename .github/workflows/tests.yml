@@ -203,6 +203,43 @@ jobs:
             echo "ok: shell function from ~/.bashrc resolves"
           fi
 
+          # ADR 0014, and the reason this job exists at all: everything else on
+          # PATH is unwritable inside the sandbox, so the tool directory is the
+          # only place an agent-installed tool can outlive its own process. If
+          # the gate cannot see what is in it, the mechanism is decorative.
+          #
+          # A login shell REBUILDS PATH rather than inheriting it — macOS's
+          # /etc/profile runs path_helper, Debian's assigns it outright — so this
+          # is also the check that the prepend happens late enough to survive.
+          mkdir -p "$SMALLHOURS_TOOL_BIN"
+          printf '#!/bin/sh\necho agent-tool ran\n' > "$SMALLHOURS_TOOL_BIN/probe-agent-tool"
+          chmod +x "$SMALLHOURS_TOOL_BIN/probe-agent-tool"
+          probe toolbin 'version: 1
+          verify: "probe-agent-tool"
+          verify_reentries: 0'
+          if [ -n "$SH_VERIFY_FAILED" ]; then
+            echo "::error::a tool in \$SMALLHOURS_TOOL_BIN is invisible to the gate — ADR 0014's mechanism does not work on this image"
+            echo "$SH_VERIFY_FAILED"; rc=1
+          else
+            echo "ok: a tool installed in the tool directory resolves"
+          fi
+
+          # The property `corepack pnpm run verify` lacked, which cost a consumer
+          # run before anyone knew to look for it: PATH must be EXPORTED, so a
+          # command that re-invokes a tool by name resolves it too. Repos whose
+          # verify script calls its own package manager are the normal case.
+          printf '#!/bin/sh\nprobe-agent-tool\n' > "$SMALLHOURS_TOOL_BIN/probe-wrapper-tool"
+          chmod +x "$SMALLHOURS_TOOL_BIN/probe-wrapper-tool"
+          probe toolnested 'version: 1
+          verify: "probe-wrapper-tool"
+          verify_reentries: 0'
+          if [ -n "$SH_VERIFY_FAILED" ]; then
+            echo "::error::a script in the tool directory cannot re-invoke another tool there — children are not inheriting PATH"
+            echo "$SH_VERIFY_FAILED"; rc=1
+          else
+            echo "ok: a script in the tool directory can re-invoke another by name"
+          fi
+
           # The gate must not LOSE what a plainer shell would have kept. Nothing
           # asserted this until #29's remedy — invoke through a launcher the
           # runner always has — made an inherited PATH the thing that remedy

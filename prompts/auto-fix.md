@@ -28,6 +28,17 @@ Rules:
   make NO changes and explain that conclusion in your final summary — a human
   will take over; guessing wastes the attempt.
 - Re-run the repository's tests/linters after your changes to confirm the fix.
+- A directory on your PATH is WRITABLE: `$SMALLHOURS_TOOL_BIN`. Install anything
+  you need for yourself there — every installer takes a flag for it:
+  `npm i -g --prefix $SMALLHOURS_TOOL_PREFIX`,
+  `corepack enable --install-directory $SMALLHOURS_TOOL_BIN`,
+  `pip install --prefix $SMALLHOURS_TOOL_PREFIX`,
+  `cargo install --root $SMALLHOURS_TOOL_PREFIX`,
+  `GOBIN=$SMALLHOURS_TOOL_BIN go install`,
+  `uv tool install --bin-dir $SMALLHOURS_TOOL_BIN`. Everywhere else on PATH is
+  read-only, so a tool you reach any other way — a per-command launcher, a
+  scratch directory — disappears with your process, and the check that runs
+  after you will not find it.
 - Do NOT push, do NOT open or merge pull requests, do NOT change branches or
   remotes. Leave your work in the working tree — the system commits and pushes.
 - Not every failure is code. If what is broken is the pull request TITLE — a

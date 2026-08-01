@@ -88,9 +88,17 @@ _verify_strip_shell_noise() { # log
 # FULL SHELL INITIALISATION (ADR 0011), shared by the gate and by the probes
 # below, so a diagnostic can never describe a shell the command did not run in.
 # Why each piece is here is argued at the call site in verify_gate.
+#
+# The tool directory (ADR 0014) is prepended HERE, last, and not in the env of
+# the shell itself: a login shell can REBUILD PATH rather than inherit it —
+# macOS `/etc/profile` runs `path_helper`, and Debian's assigns it outright — so
+# an entry passed in from outside is discarded before the command ever runs.
+# Measured: prepending in `env` loses it, prepending after the profile chain
+# keeps it.
 _SH_VERIFY_SHELL_PREAMBLE='set +H
 [ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc" || true
 unset -f command_not_found_handle 2>/dev/null || true
+[ -n "${SMALLHOURS_TOOL_BIN:-}" ] && export PATH="$SMALLHOURS_TOOL_BIN:$PATH"
 '
 
 # `timeout N` when the host has it, nothing when it does not — same degradation
@@ -274,6 +282,17 @@ verify_gate() { # result_json
   local cmd; cmd="$(config_verify)"
   if [ -z "$cmd" ]; then return 0; fi
 
+  # What the agent installed for itself, EVERY run and not only on failure. It
+  # is the only review surface this mechanism has: unlike an edit to the script
+  # the gate invokes, these bytes never appear in a diff, and the gate runs them
+  # outside the sandbox (ADR 0014). A shim that greens the gate is visible here
+  # or nowhere.
+  if [ -n "${SMALLHOURS_TOOL_BIN:-}" ] && [ -d "$SMALLHOURS_TOOL_BIN" ]; then
+    local tools; tools="$(ls -1 "$SMALLHOURS_TOOL_BIN" 2>/dev/null | tr '\n' ' ')" || true
+    if [ -n "$tools" ]; then sh_log "verify: tools the agent installed: $tools"
+    else sh_log "verify: tools the agent installed: none"; fi
+  fi
+
   local max log i=0 rc=0 first
   max="$(config_verify_reentries)"
   log="${base}.verify"
@@ -325,6 +344,10 @@ verify_gate() { # result_json
     # interpolated into the -c string: an interactive shell history-expands what
     # it parses, so a `!` anywhere in the consumer's command would otherwise be
     # mangled before it ever ran.
+    # The tool directory reaches this shell through the preamble above, and is
+    # EXPORTED there, so a consumer script that re-invokes its own package
+    # manager by name finds it too — the case `corepack pnpm run verify` failed
+    # on, one level below where anyone was looking.
     env -u GH_TOKEN -u GITHUB_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN \
       SH_VERIFY_CMD="$cmd" \
       bash -lic "${_SH_VERIFY_SHELL_PREAMBLE}"'_c="$SH_VERIFY_CMD"; unset SH_VERIFY_CMD; eval "$_c"' \
