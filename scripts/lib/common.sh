@@ -74,11 +74,20 @@ sh_default_branch() {
   gh repo view "$(sh_repo)" --json defaultBranchRef --jq .defaultBranchRef.name
 }
 
-# Where implement.sh leaves a still-red verify gate's output for open-pr.sh to
+# Where implement.sh leaves a failed verify gate's output for open-pr.sh to
 # quote in the PR body. A file rather than an argument because the two scripts
 # are separate processes in the workflow step, and OUTSIDE the worktree so
 # `git add -A` can never commit it. Absent = the gate passed, or none was
 # configured; open-pr.sh must treat those the same way.
+#
+# FORMAT — a marker line, a blank line, then the output to quote:
+#
+#   red                      the gate ran and the checks failed
+#   could-not-run <name>     <name> did not resolve, so the gate never started
+#
+# Two outcomes, two messages: only the first says anything about the agent's
+# work, and a reader told "the gate failed" when nothing was ever checked has
+# been told the opposite of the truth (#29).
 sh_verify_report_path() {
   printf '%s\n' "${SMALLHOURS_VERIFY_REPORT:-${RUNNER_TEMP:-${TMPDIR:-/tmp}}/smallhours-verify-failed.txt}"
 }

@@ -51,6 +51,11 @@ label invariant.
 | `cancel.sh`         | T9 / T10 / T11                              | `cancel.sh <issue-closed\|label-removed\|pr-closed> <number>` |
 | `report-usage.sh`   | Per-run PR usage comment                     | `report-usage.sh <pr> <result-json> <stage>` |
 
+Not a stage: `consumer-config.sh` installs the pinned yq and fetches
+`.smallhours.yml`, run once per job before any stage script. It was a composite
+action until ADR 0010 moved the toolkit checkout out of `$GITHUB_WORKSPACE`,
+where a local `uses:` path can no longer reach it.
+
 Phase 2's remaining piece is the sweep (M7). The Milestone 3 workflow is
 what maps GitHub events to these entry points; Milestone 5 exercises them
 end-to-end against a real repo.
