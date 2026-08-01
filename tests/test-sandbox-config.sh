@@ -24,6 +24,11 @@ ok()  { pass=$((pass+1)); echo "  ok: $1"; }
 bad() { fail=$((fail+1)); echo "  FAIL: $1"; }
 case_banner() { echo "case: $1"; }
 
+# Pinned rather than inherited: the rendered profile opens this path for writing
+# (ADR 0014), and the assertions below name it. A fixture path keeps them
+# independent of whatever RUNNER_TEMP/TMPDIR this machine has.
+export SMALLHOURS_TOOL_PREFIX="$FIX/tools"
+
 # Render the managed settings against a given config file.
 render() { # config-file
   ( SMALLHOURS_CONFIG="$1"; unset GITHUB_WORKSPACE
@@ -68,9 +73,12 @@ EOF
 
 case_banner "no sandbox: block — the pre-existing consumer"
 before="$(render "$FIX/empty.yml")"
-case "$(printf '%s' "$before" | jq -r '.sandbox.filesystem // "absent"')" in
-  absent) ok "renders no filesystem block at all" ;;
-  *)      bad "invented a filesystem block: $(printf '%s' "$before" | jq -c .sandbox.filesystem)" ;;
+# ADR 0014: the profile opens exactly ONE path for writing on its own — the tool
+# directory, which is the only place an agent-installed tool can outlive its own
+# process. A consumer who sets no sandbox block gets that and nothing else.
+case "$(printf '%s' "$before" | jq -r '.sandbox.filesystem.allowWrite | join(",")')" in
+  "$SMALLHOURS_TOOL_PREFIX") ok "opens the tool directory and nothing else" ;;
+  *) bad "unexpected base allowWrite: $(printf '%s' "$before" | jq -c .sandbox.filesystem)" ;;
 esac
 case "$(printf '%s' "$before" | jq -r '.sandbox.excludedCommands | length')" in
   0) ok "excludedCommands stays empty" ;;
@@ -109,9 +117,17 @@ case "$(printf '%s' "$after" | jq -r '.sandbox.enabled, .sandbox.failIfUnavailab
 esac
 
 case_banner "legitimate widenings do apply"
-case "$(printf '%s' "$after" | jq -r '.sandbox.filesystem.allowWrite | sort | join(",")')" in
-  '~/.cache,~/.local/share/pnpm') ok "allowWrite carries both store paths" ;;
-  *) bad "allowWrite wrong: $(printf '%s' "$after" | jq -c '.sandbox.filesystem.allowWrite')" ;;
+aw="$(printf '%s' "$after" | jq -r '.sandbox.filesystem.allowWrite | sort | join(",")')"
+case "$aw" in
+  *'~/.cache'*) case "$aw" in *'~/.local/share/pnpm'*) ok "allowWrite carries both store paths" ;;
+    *) bad "allowWrite wrong: $aw" ;; esac ;;
+  *) bad "allowWrite wrong: $aw" ;;
+esac
+# A consumer naming their own list must not displace the tool directory: without
+# it the agent has nowhere writable on PATH and the gate is back to guessing.
+case "$aw" in
+  *"$SMALLHOURS_TOOL_PREFIX"*) ok "the tool directory survives a consumer's own allowWrite" ;;
+  *) bad "consumer list displaced the tool directory: $aw" ;;
 esac
 case "$(printf '%s' "$after" | jq -r '.sandbox.excludedCommands | join(",")')" in
   'docker *') ok "excludedCommands carries the consumer entry" ;;

@@ -1,7 +1,13 @@
 # 0012 — The verify gate's environment is the runner's, not the agent's
 
 **Date:** 2026-07-31
-**Status:** Accepted
+**Status:** Accepted, then narrowed by
+[ADR 0014](0014-a-writable-tool-directory-on-the-gates-path.md): the agent now
+has one writable directory on the gate's `PATH`, so decision 1's contract is the
+**fallback** for a command whose entry point comes from elsewhere, not the price
+of using the gate. Decision 2 stands unchanged. The measurements below —
+`npx`'s cache as the mechanism, and no shell snapshot in a headless run — are
+what led to 0014.
 
 ## Context
 

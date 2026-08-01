@@ -22,6 +22,17 @@ Rules:
   seams, interfaces, or acceptance criteria, work test-first at those seams:
   write the failing test, then make it pass.
 - Nothing is installed for you. If this repo has dependencies, install them
+- A directory on your PATH is WRITABLE: `$SMALLHOURS_TOOL_BIN`. Install anything
+  you need for yourself there — every installer takes a flag for it:
+  `npm i -g --prefix $SMALLHOURS_TOOL_PREFIX`,
+  `corepack enable --install-directory $SMALLHOURS_TOOL_BIN`,
+  `pip install --prefix $SMALLHOURS_TOOL_PREFIX`,
+  `cargo install --root $SMALLHOURS_TOOL_PREFIX`,
+  `GOBIN=$SMALLHOURS_TOOL_BIN go install`,
+  `uv tool install --bin-dir $SMALLHOURS_TOOL_BIN`. Everywhere else on PATH is
+  read-only, so a tool you reach any other way — a per-command launcher, a
+  scratch directory — disappears with your process, and the check that runs
+  after you will not find it.
   first — its own AGENTS.md / CLAUDE.md says how — so you can actually run its
   checks. If an install or a check fails because a network host or a write
   outside the working directory was blocked, name what was blocked in your final

@@ -313,11 +313,20 @@ and it is ignored with a warning. Full key reference:
 Then tell the agent to install, in your repo's `AGENTS.md` or `CLAUDE.md`. It
 reads those; it will not guess your package manager.
 
+**Where a tool it installs has to land.** Everything on the runner's `PATH` is
+read-only inside the sandbox — including `~/.bashrc`, so the agent cannot even
+add a directory of its own. smallhours gives it exactly one writable directory on
+`PATH`, `$SMALLHOURS_TOOL_BIN`, and the agent's prompts point at it with the flag
+every installer has (`--prefix`, `--root`, `--install-directory`, `GOBIN`). A
+tool that lands there is visible to the check below; one reached any other way —
+a per-command launcher like `npx`, a scratch directory — disappears with the
+process that ran it (ADR 0014).
+
 **2. Gate the push.** `verify` is any shell command, run after the agent finishes
 and before the pull request opens:
 
 ```yaml
-verify: corepack pnpm run verify
+verify: pnpm verify
 verify_reentries: 2
 ```
 
@@ -333,21 +342,16 @@ Point `verify` at checks that are **fast and need no services** — linters, typ
 checks, unit tests. The agent has no Docker, no browsers, and cannot bind a local
 port, so browser and integration suites belong in CI rather than in the gate.
 
-**Write a command that resolves its own entry point.** The gate's shell is the
-runner's, not the agent's: it is a fully initialised login shell, so a toolchain
-whose installer wrote to a shell startup file is on `PATH` — including ones that
-register through a shell function, like `nvm` or `sdkman`. What it cannot see is
-anything that never outlived the agent's own process: a tool fetched per command,
-a virtualenv activated in one call. That is the common case, not the exotic one,
-so invoke through something the runner is guaranteed to have — `corepack` or
-`npx` (both ship with node), `./mvnw`, `./gradlew`, `uv run`, `make` — or by
-absolute path, or bootstrap the toolchain inside the command itself.
+The command runs with `$SMALLHOURS_TOOL_BIN` on `PATH`, so whatever the agent
+installed there — `pnpm`, `pytest`, `cargo`, a linter — resolves by bare name,
+and so does a script of yours that re-invokes its own package manager. Nothing
+else the agent did survives: a virtualenv activated inside one command, a tool
+fetched per invocation, an environment variable it exported.
 
-`corepack pnpm` rather than `npx --yes pnpm@11.17.0` in the example above because
-corepack takes the version from your `packageManager` field, and a hand-copied
-version drifts the day a bot bumps one and not the other. Where corepack is
-absent, `npx --yes <manager>@<version> run verify` is the fallback. Same shape
-everywhere: the launcher is guaranteed, the toolchain is not.
+If your command's entry point comes from somewhere else entirely, make it
+self-contained — a committed script (`./scripts/verify.sh`), a wrapper the repo
+ships (`./mvnw`, `./gradlew`), or an absolute path. That is the fallback, not the
+rule it once was.
 
 If your command's own executable does not resolve, smallhours does **not** hand
 the error to the agent to "fix" — it says on the pull request that the gate could
