@@ -1,10 +1,15 @@
 # 0011 — The verify gate runs in the agent's shell, and says so when it cannot run at all
 
 **Date:** 2026-07-31
-**Status:** Accepted. Decision 1's reach is bounded by
-[ADR 0012](0012-gate-environment-is-the-runners.md), which found that a toolchain
-the agent never wrote to disk is beyond any shell — the decisions below stand
-unchanged.
+**Status:** Decision 1 **superseded** by
+[ADR 0014](0014-a-writable-tool-directory-on-the-gates-path.md); decisions 2 and
+3 stand. The login+interactive shell and its explicit `. ~/.bashrc` were removed
+on 2026-08-01: the sandbox forbids the agent from writing `~/.bashrc` or any
+directory on `PATH`, so no toolchain it bootstrapped could ever have been in a
+startup file. The measurement below is real and was made against a fixture
+written by hand — which is precisely the case an agent cannot produce. It is kept
+because the shell behaviour it records is still true, and because the reasoning
+error is worth being able to find.
 
 ## Context
 

@@ -39,11 +39,6 @@ _sh_v_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # context, so it does not need the whole log to know what it did.
 SH_VERIFY_LOG_LINES="${SH_VERIFY_LOG_LINES:-200}"
 
-# Wall-clock ceiling on the on-disk probe in _verify_diagnose. Overridable only
-# so the suite can force the cut-short branch deterministically; no consumer has
-# a reason to set it.
-SH_VERIFY_PROBE_SECONDS="${SH_VERIFY_PROBE_SECONDS:-8}"
-
 # Set by verify_gate to the final red output, or empty when the gate passed or
 # none was configured. implement.sh writes it to sh_verify_report_path for
 # open-pr.sh to surface.
@@ -63,70 +58,12 @@ SH_VERIFY_UNRESOLVED=""
 # Re-entry results go to their OWN files on purpose: report-usage.sh reads the
 # stage's $RESULT_JSON, and overwriting it would replace the implement run's
 # usage figures with a repair's.
-# An interactive login shell brackets the command with chatter of its own: it
-# announces the missing tty before running anything, and prints `logout` on the
-# way out. Neither is the consumer's output and both would otherwise be quoted
-# on the pull request as if they were.
-#
-# Position is what makes this safe: only LEADING job-control lines and a
-# trailing `logout` are dropped, so the same strings appearing in the middle —
-# where they could only have come from the command — survive. Getting this wrong
-# in the lenient direction would also mask a silent failure: a command that exits
-# non-zero printing nothing must leave an EMPTY log, or the report says "here is
-# the output" and shows bash talking to itself.
-_verify_strip_shell_noise() { # log
-  local log="$1" tmp="${1}.stripped"
-  awk '
-    !seen && /^bash: (cannot set terminal process group|no job control in this shell)/ { next }
-    { seen = 1
-      if (held) print prev
-      prev = $0; held = 1 }
-    END { if (held && prev != "logout") print prev }
-  ' "$log" > "$tmp" && mv "$tmp" "$log"
-}
-
-# FULL SHELL INITIALISATION (ADR 0011), shared by the gate and by the probes
-# below, so a diagnostic can never describe a shell the command did not run in.
-# Why each piece is here is argued at the call site in verify_gate.
-#
-# The tool directory (ADR 0014) is prepended HERE, last, and not in the env of
-# the shell itself: a login shell can REBUILD PATH rather than inherit it —
-# macOS `/etc/profile` runs `path_helper`, and Debian's assigns it outright — so
-# an entry passed in from outside is discarded before the command ever runs.
-# Measured: prepending in `env` loses it, prepending after the profile chain
-# keeps it.
-_SH_VERIFY_SHELL_PREAMBLE='set +H
-[ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc" || true
-unset -f command_not_found_handle 2>/dev/null || true
-[ -n "${SMALLHOURS_TOOL_BIN:-}" ] && export PATH="$SMALLHOURS_TOOL_BIN:$PATH"
+# The tool directory (ADR 0014) goes on PATH here rather than in the environment
+# of the shell, and is EXPORTED, so a consumer script that re-invokes its own
+# package manager by name finds it too. Prepending from outside is not enough
+# where a shell rebuilds PATH; doing it inside works either way.
+_SH_VERIFY_SHELL_PREAMBLE='[ -n "${SMALLHOURS_TOOL_BIN:-}" ] && export PATH="$SMALLHOURS_TOOL_BIN:$PATH"
 '
-
-# `timeout N` when the host has it, nothing when it does not — same degradation
-# claude-run.sh makes for the wall-clock budget. A probe is a nicety on a path
-# that has already failed; it must never be the reason a run hangs.
-_verify_timeout() { # seconds
-  if command -v timeout >/dev/null 2>&1; then printf 'timeout %s' "$1"; fi
-}
-
-# Whether a hit on disk is somewhere a shell could plausibly have HAD, as
-# opposed to a derived directory nothing puts on PATH: a package cache, a
-# content-addressed store, an installed dependency tree.
-#
-# The distinction is the whole value of the on-disk probe. `npx pnpm` downloads
-# pnpm into ~/.npm/_npx/<hash>/node_modules/.bin and runs it from there —
-# measured on mediamtx-connect#306 — and that directory was never on anyone's
-# PATH, not the gate's and not the agent's. Counting it as "the toolchain is
-# here and we failed to reach it" would fire ADR 0012's payoff trigger for every
-# npx-based consumer, which is the most common shape there is.
-#
-# Matched by position, not by ecosystem: these are the names build tools use for
-# directories they GENERATE, in whatever language.
-_verify_path_shaped() { # path
-  case "$1" in
-    */_npx/*|*/_cacache/*|*/node_modules/*|*/.cache/*|*/store/*) return 1 ;;
-    *) return 0 ;;
-  esac
-}
 
 # The executable bash reported as missing, or empty. Two passes rather than one
 # expression: the prefix bash puts in front (`bash: line 3:`, `bash: eval:
@@ -136,145 +73,21 @@ _verify_missing_command() { # log
   sed -n 's/: command not found$//p' "$1" | sed 's/.*: //' | tail -n 1
 }
 
-# Everything the runner can say about why one name did not resolve. Runs ONLY
-# when the gate never started, and writes only to the log — the pull request
-# gets a remedy, not a dump.
+# Why one name did not resolve, in the log only — the pull request gets a remedy,
+# not a dump. Since ADR 0014 there is exactly one place an agent-installed tool
+# can be, and verify_gate lists its contents on every run, so all that is left to
+# say here is what the gate's own PATH was.
 #
-# It exists because the two mechanisms that produce this failure print the same
-# `command not found` and want opposite responses (#29). One is a toolchain that
-# lives on disk and no shell we run reaches, which would be ours to fix; the
-# other is a toolchain that never outlived the agent's own process, which no
-# shell can ever reach and which ADR 0012 answers with a contract instead. A
-# consumer's log now says which, on the first occurrence, instead of costing an
-# issue to work out.
-#
-# Language-neutral by construction: every probe is keyed on the missing name and
-# nothing else. Nothing here changes the outcome of the run.
-#
-# EVERY probe swallows its own failure. implement.sh runs `set -euo pipefail` and
-# sources this file, so a probe that exits non-zero — a killed `find`, an `ls` of
-# a directory that isn't there — would abort the run at the exact point where the
-# branch still has to be pushed and the PR still has to say what happened. A
-# diagnostic that stalls an issue is worse than no diagnostic at all.
+# Swallows its own failure: implement.sh runs `set -euo pipefail` and sources this
+# file, so a probe exiting non-zero would abort the run at the point where the
+# branch still has to be pushed and the PR still has to explain itself.
 _verify_diagnose() { # missing
-  local missing="$1" path snap resolved found roots=() r tmo
-  tmo="$(_verify_timeout 10)" || true
-
-  sh_log "verify: diagnose: \`$missing\` did not resolve — what the gate could see:"
-
-  # 1. The gate's own PATH, from the same initialised shell the command ran in.
-  # Marker-prefixed rather than read off the last line: an interactive login
-  # shell prints `logout` on its way out, and that would otherwise BE the answer.
+  local missing="$1" path
   path="$(env -u GH_TOKEN -u GITHUB_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN \
-    bash -lic "${_SH_VERIFY_SHELL_PREAMBLE}"'printf "SH_PROBE_PATH=%s\n" "$PATH"' 2>/dev/null \
-    | sed -n 's/^SH_PROBE_PATH=//p' | tail -n 1)" || true
-  sh_log "verify: diagnose:   PATH = ${path:-<empty>}"
-
-  # 2. Does it exist on this machine at all? A fixed list of the places a
-  # self-bootstrapping toolchain lands, not $HOME. Symlinks count — a package
-  # manager's shim usually is one.
-  #
-  # `/usr/local/bin` alone, not `/usr/local`: on a hosted runner that tree
-  # carries whole toolchains and a depth-6 walk of it did not finish in EIGHT
-  # SECONDS on a BARE ubuntu-24.04 — measured by the gate-environment job, whose
-  # log timings are the record. Adding back `/usr/local/lib` cost 5s of the
-  # budget on the same bare runner and buys nothing: a globally installed tool
-  # puts its executable in `bin`, usually as a symlink into `lib`, and symlinks
-  # are matched. The budget has to survive a CONSUMER's runner, where ~/.cache
-  # and ~/.npm hold a populated package store and this probe is the only thing
-  # that can tell "unreachable" from "never existed".
-  #
-  # Bounded by its own watchdog rather than by `timeout`, which macOS does not
-  # ship: a consumer's package store holds hundreds of thousands of files, and a
-  # courtesy probe on an already-failed path must not be the slowest thing in the
-  # run.
-  for r in "$HOME/.local" "$HOME/.cache" "$HOME/.npm" "$HOME/.config" \
-           /usr/local/bin "$PWD"; do
-    [ -d "$r" ] && roots+=("$r")
-  done
-  found=""
-  local t0=$SECONDS cut=0
-  if [ "${#roots[@]}" -gt 0 ]; then
-    found="$( {
-      find "${roots[@]}" -maxdepth 6 -name "$missing" \( -type f -o -type l \) -print &
-      _f=$!
-      # >/dev/null matters: the watchdog would otherwise inherit the capture
-      # pipe, and the reader cannot see end-of-input until EVERY writer exits —
-      # so a search that finished in milliseconds would still cost the full
-      # timeout, every time.
-      ( sleep "$SH_VERIFY_PROBE_SECONDS"; kill "$_f" 2>/dev/null ) >/dev/null 2>&1 & _w=$!
-      wait "$_f"; kill "$_w" 2>/dev/null
-    } 2>/dev/null | head -n 5 )" || true
-  fi
-  # A search that ran out of time found nothing AND proved nothing, and the two
-  # must never read the same. "Not there" is what tells a consumer the failure is
-  # theirs to fix; a timeout that says it is the probe lying with a straight face.
-  local took=$(( SECONDS - t0 ))
-  [ "$took" -ge "$SH_VERIFY_PROBE_SECONDS" ] && cut=1
-  # The duration is part of what the probe SAYS, not something a reader derives
-  # from log timestamps: anything that buffers this output — a `cat` of captured
-  # stderr, an Actions log group — stamps every line at the same instant and the
-  # headroom becomes invisible. It is the only warning that the budget is about
-  # to stop sufficing, and a consumer's own log deserves it too.
-  # Only a hit somewhere a shell could plausibly have had counts as "we failed to
-  # reach it"; the rest are a launcher's leavings. See _verify_path_shaped.
-  local reachable="" hit
-  while IFS= read -r hit; do
-    [ -n "$hit" ] || continue
-    if _verify_path_shaped "$hit"; then reachable="$hit"; break; fi
-  done <<< "$found"
-
-  if [ -n "$found" ]; then
-    sh_log "verify: diagnose:   on disk (${took}s): $(printf '%s' "$found" | tr '\n' ' ')"
-  elif [ "$cut" -eq 1 ]; then
-    sh_log "verify: diagnose:   on disk: INCONCLUSIVE — the search was cut off at ${SH_VERIFY_PROBE_SECONDS}s under ${roots[*]}"
-  else
-    sh_log "verify: diagnose:   on disk (${took}s of ${SH_VERIFY_PROBE_SECONDS}s): not found under ${roots[*]:-<no readable roots>}"
-  fi
-
-  # 3. Claude Code's shell snapshot, read-only and never depended on. ADR 0011
-  # rejected sourcing it for the gate; this only asks whether doing so WOULD have
-  # helped, which is the measurement ADR 0012's payoff trigger turns on. The
-  # snapshot is written once at session start, so a toolchain the agent fetched
-  # mid-session is not in it either — a `no` here is the expected answer, and a
-  # `yes` is the finding.
-  snap="$(ls -1t "$HOME"/.claude/shell-snapshots/* 2>/dev/null | head -n 1)" || true
-  if [ -z "$snap" ]; then
-    sh_log "verify: diagnose:   agent shell snapshot: none present"
-  else
-    # PATH is emptied first, so what comes back is what the SNAPSHOT provides and
-    # not what this process already had. Without that, a snapshot that fails to
-    # source at all still "resolves" everything on the ambient PATH, and the one
-    # question this probe exists to answer gets a confident wrong answer.
-    resolved="$($tmo env PATH= bash -c '. "$1" >/dev/null 2>&1; command -v "$2" || true' \
-      _ "$snap" "$missing" </dev/null 2>/dev/null | tail -n 1)" || true
-    if [ -n "$resolved" ]; then
-      sh_log "verify: diagnose:   agent shell snapshot: WOULD have resolved it, at $resolved"
-    else
-      sh_log "verify: diagnose:   agent shell snapshot: does not resolve it either"
-    fi
-  fi
-
-  # The one line a reader needs. Which world this is decides whether anything is
-  # ours to fix at all, so each answer the probe can honestly give gets its own
-  # verdict: found somewhere reachable, found only in a launcher's cache, cut
-  # short, or genuinely absent. Only the first is ours.
-  if [ -n "$reachable" ] || [ -n "${resolved:-}" ]; then
-    sh_log "verify: diagnose: it EXISTS but no shell the gate can reach has it — \
-report this on smallhours#29; the gate could have run this."
-  elif [ -n "$found" ]; then
-    sh_log "verify: diagnose: found only inside a package cache or dependency tree, \
-which nothing puts on PATH — that is what a per-invocation launcher (npx, corepack) \
-leaves behind, and it was never reachable by the agent either. Make the verify \
-command resolve its own entry point (ADR 0012)."
-  elif [ "$cut" -eq 1 ]; then
-    sh_log "verify: diagnose: could not tell whether it exists here — the search did \
-not finish. Make the verify command resolve its own entry point (ADR 0012); if you \
-believe the tool IS on this runner, say so on smallhours#29."
-  else
-    sh_log "verify: diagnose: nothing on this runner provides it, so no shell could \
-have run it. Make the verify command resolve its own entry point (ADR 0012)."
-  fi
+    bash -c "${_SH_VERIFY_SHELL_PREAMBLE}"'printf "%s\n" "$PATH"' 2>/dev/null | tail -n 1)" || true
+  sh_log "verify: diagnose: PATH was ${path:-<empty>}"
+  sh_log "verify: diagnose: a tool the agent installs has to land in \$SMALLHOURS_TOOL_BIN (ADR 0014); \
+one reached any other way does not outlive the command that reached it."
 }
 
 verify_gate() { # result_json
@@ -312,47 +125,21 @@ verify_gate() { # result_json
     # credentials are load-bearing for the push and stay, but nothing a verify
     # command legitimately does needs GH_TOKEN.
     #
-    # FULL SHELL INITIALISATION (ADR 0011). A bare `bash -c` sources no startup
-    # file at all, so every toolchain the agent bootstrapped for itself was
-    # invisible here — and since ADR 0008 chose "the agent installs its own
-    # dependencies" over a setup phase, that is the common case, not an edge
-    # one. This knows nothing about any language: exported vars (JAVA_HOME,
-    # VIRTUAL_ENV, GOPATH) and shell functions (nvm, sdkman, pyenv, asdf) all
-    # arrive by the same door.
+    # A PLAIN SHELL (ADR 0014). ADR 0011 ran this login+interactive and sourced
+    # ~/.bashrc so a toolchain the agent installed would be visible; reading the
+    # sandbox documentation later showed that case cannot occur — the agent
+    # cannot write ~/.bashrc, or any directory on PATH, so no installer of its
+    # can leave anything in a startup file. What it CAN write is the tool
+    # directory, which the preamble puts on PATH and exports, so a consumer
+    # script that re-invokes its own package manager by name finds it too.
     #
-    # Three flags and an explicit source, because no single form is a superset:
-    #   -i  installers append BELOW ~/.bashrc's `case $- in *i*) ;; *) return`
-    #       guard, so a non-interactive shell reads none of it. `bash -lc`, the
-    #       obvious one-word fix, resolves nothing for this reason.
-    #   -l  picks up /etc/profile and the profile chain, where system-wide and
-    #       some per-user toolchains land instead.
-    #   . ~/.bashrc  because a LOGIN shell reads ~/.bash_profile OR ~/.bash_login
-    #       OR ~/.profile and never ~/.bashrc directly. Ubuntu's stock ~/.profile
-    #       sources it, but any installer that drops a ~/.bash_profile shadows
-    #       that file and silently severs the chain. Re-sourcing when the profile
-    #       already did is safe — rc files guard their own PATH edits.
-    #
-    # `-i` also drags in /etc/bash.bashrc, where Debian and Ubuntu define
-    # `command_not_found_handle` — so a missing command prints the distro's
-    # apt-suggestion text instead of bash's own `…: command not found`, and the
-    # classification below silently stops recognising it. Unset it: a
-    # package-suggestion nicety for humans at a prompt has no business in a CI
-    # gate, where it costs an apt-database query and makes the one message this
-    # gate has to parse depend on which distro the runner happens to be.
-    #
-    # The command travels in the environment and is eval'd rather than being
-    # interpolated into the -c string: an interactive shell history-expands what
-    # it parses, so a `!` anywhere in the consumer's command would otherwise be
-    # mangled before it ever ran.
-    # The tool directory reaches this shell through the preamble above, and is
-    # EXPORTED there, so a consumer script that re-invokes its own package
-    # manager by name finds it too — the case `corepack pnpm run verify` failed
-    # on, one level below where anyone was looking.
+    # The command still travels in the environment and is eval'd rather than
+    # interpolated into the -c string: it keeps the consumer's quoting intact
+    # whatever it contains.
     env -u GH_TOKEN -u GITHUB_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN \
       SH_VERIFY_CMD="$cmd" \
-      bash -lic "${_SH_VERIFY_SHELL_PREAMBLE}"'_c="$SH_VERIFY_CMD"; unset SH_VERIFY_CMD; eval "$_c"' \
+      bash -c "${_SH_VERIFY_SHELL_PREAMBLE}"'_c="$SH_VERIFY_CMD"; unset SH_VERIFY_CMD; eval "$_c"' \
       > "$log" 2>&1 || rc=$?
-    _verify_strip_shell_noise "$log"
     if [ "$rc" -eq 0 ]; then
       if [ "$i" -eq 0 ]; then sh_log "verify: green"
       else sh_log "verify: green after $i re-entry(ies)"; fi
