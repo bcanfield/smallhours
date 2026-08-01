@@ -206,7 +206,10 @@ locally too; the job is what proves the fixtures still match reality.
   noisy interactive startup off to the side. Rejected as too narrow — it drops
   `JAVA_HOME`, `VIRTUAL_ENV`, `GOPATH` and every function-based version manager,
   re-specialising a fix that should be language-neutral.
-- **Source Claude Code's shell snapshot** (`~/.claude/shell-snapshots/`). By
+- **Source Claude Code's shell snapshot** (`~/.claude/shell-snapshots/`).
+  Superseded by measurement: [ADR 0012](0012-gate-environment-is-the-runners.md)
+  found that a headless `claude -p` run writes no snapshot at all, so there is
+  nothing to source. The reasoning below stands; the artefact does not exist. By
   definition byte-identical to the agent's environment, whatever the runtime —
   the most faithful answer available. Rejected for depending on a Claude Code
   internal whose path and format no contract promises. Reconsider if that

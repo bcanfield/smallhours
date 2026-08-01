@@ -100,6 +100,26 @@ _verify_timeout() { # seconds
   if command -v timeout >/dev/null 2>&1; then printf 'timeout %s' "$1"; fi
 }
 
+# Whether a hit on disk is somewhere a shell could plausibly have HAD, as
+# opposed to a derived directory nothing puts on PATH: a package cache, a
+# content-addressed store, an installed dependency tree.
+#
+# The distinction is the whole value of the on-disk probe. `npx pnpm` downloads
+# pnpm into ~/.npm/_npx/<hash>/node_modules/.bin and runs it from there —
+# measured on mediamtx-connect#306 — and that directory was never on anyone's
+# PATH, not the gate's and not the agent's. Counting it as "the toolchain is
+# here and we failed to reach it" would fire ADR 0012's payoff trigger for every
+# npx-based consumer, which is the most common shape there is.
+#
+# Matched by position, not by ecosystem: these are the names build tools use for
+# directories they GENERATE, in whatever language.
+_verify_path_shaped() { # path
+  case "$1" in
+    */_npx/*|*/_cacache/*|*/node_modules/*|*/.cache/*|*/store/*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 # The executable bash reported as missing, or empty. Two passes rather than one
 # expression: the prefix bash puts in front (`bash: line 3:`, `bash: eval:
 # line 1:`) is not always there, and making it optional needs `\?`, which GNU sed
@@ -188,6 +208,14 @@ _verify_diagnose() { # missing
   # stderr, an Actions log group — stamps every line at the same instant and the
   # headroom becomes invisible. It is the only warning that the budget is about
   # to stop sufficing, and a consumer's own log deserves it too.
+  # Only a hit somewhere a shell could plausibly have had counts as "we failed to
+  # reach it"; the rest are a launcher's leavings. See _verify_path_shaped.
+  local reachable="" hit
+  while IFS= read -r hit; do
+    [ -n "$hit" ] || continue
+    if _verify_path_shaped "$hit"; then reachable="$hit"; break; fi
+  done <<< "$found"
+
   if [ -n "$found" ]; then
     sh_log "verify: diagnose:   on disk (${took}s): $(printf '%s' "$found" | tr '\n' ' ')"
   elif [ "$cut" -eq 1 ]; then
@@ -219,12 +247,18 @@ _verify_diagnose() { # missing
     fi
   fi
 
-  # The one line a reader needs. Which of the two worlds this is decides whether
-  # anything is ours to fix at all — so a probe that could not finish gets its own
-  # verdict rather than borrowing the confident one.
-  if [ -n "$found" ] || [ -n "${resolved:-}" ]; then
+  # The one line a reader needs. Which world this is decides whether anything is
+  # ours to fix at all, so each answer the probe can honestly give gets its own
+  # verdict: found somewhere reachable, found only in a launcher's cache, cut
+  # short, or genuinely absent. Only the first is ours.
+  if [ -n "$reachable" ] || [ -n "${resolved:-}" ]; then
     sh_log "verify: diagnose: it EXISTS but no shell the gate can reach has it — \
 report this on smallhours#29; the gate could have run this."
+  elif [ -n "$found" ]; then
+    sh_log "verify: diagnose: found only inside a package cache or dependency tree, \
+which nothing puts on PATH — that is what a per-invocation launcher (npx, corepack) \
+leaves behind, and it was never reachable by the agent either. Make the verify \
+command resolve its own entry point (ADR 0012)."
   elif [ "$cut" -eq 1 ]; then
     sh_log "verify: diagnose: could not tell whether it exists here — the search did \
 not finish. Make the verify command resolve its own entry point (ADR 0012); if you \
