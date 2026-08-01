@@ -93,7 +93,10 @@ installed for a single step during the run is not there any more.
 Make the command resolve its own entry point (invoke it through a launcher the
 runner always has, by absolute path, or via a bootstrap step inside the command)
 and the gate will start checking this repo's work again. Until then CI is the
-only thing looking at these changes."
+only thing looking at these changes.
+
+The run log for this branch records what the gate could and could not see when
+it looked for that command."
           sh_log "open-pr: PR body says the verify gate could not run"
           ;;
         *)
