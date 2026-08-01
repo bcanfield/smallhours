@@ -37,7 +37,15 @@ Rules:
 - Do NOT open a pull request, do NOT push, and do NOT change git remotes or
   branches. Leave your work as edits in the working tree — the system commits
   and opens the pull request deterministically after you stop.
-- Do NOT touch CI configuration, secrets, or unrelated files.
+- Do NOT touch secrets or unrelated files.
+- You CANNOT change anything under `.github/workflows/`. This is a hard limit,
+  not a preference: the push you never get to see is rejected by GitHub itself,
+  because the app this runs as is deliberately not granted the `workflows`
+  permission. If the issue's acceptance criteria require editing a workflow
+  file, STOP before implementing anything and say so — including the part you
+  could have done. A pull request that quietly omits an acceptance criterion is
+  worse than one that never opens, because it looks finished. A human will make
+  that change by hand.
 - You are unattended: no command that needs a human prompt will succeed, and
   network access is restricted to an allowlist. If you cannot complete the task,
   stop and explain what is blocking you rather than working around it.

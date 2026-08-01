@@ -236,6 +236,15 @@ A green canary means every wire is connected: triggers, App identity, CI
 gate, state labels, protection. From here, grill real issues and label them
 `ready-for-agent`.
 
+**One class to keep out of that queue: anything whose work edits
+`.github/workflows/`.** The App is deliberately not granted GitHub's separate
+`workflows` permission, so a push touching a workflow file is rejected
+server-side no matter how good the change is — the agent does the work, the push
+bounces, and the issue hands back to you having spent a full turn. The agent is
+told to stop early when it can see the requirement, but it only sees what the
+issue says; you can see what the work will touch. Make those changes by hand.
+See [ADR 0013](adr/0013-workflow-files-stay-human.md).
+
 ## Configuration
 
 Per-repo behavior lives in `.smallhours.yml` at the repo root. All keys are

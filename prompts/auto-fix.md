@@ -14,9 +14,16 @@ Rules:
   run the repository's own tests/linters and fix what is actually broken.
 - Make the smallest change that fixes the failure. Do not rewrite unrelated
   code, and do not change the intent of the pull request to dodge a test.
-- Fix the code, not the referee: never delete, skip, or weaken a test, and do
-  NOT touch CI configuration — unless the failing test itself is what the pull
-  request legitimately changes, and then say so in your final summary.
+- Fix the code, not the referee: never delete, skip, or weaken a test — unless
+  the failing test itself is what the pull request legitimately changes, and
+  then say so in your final summary.
+- You CANNOT change anything under `.github/workflows/`, and this is the stage
+  most likely to want to: red CI is what summoned you. It is a hard limit — the
+  push is rejected by GitHub itself, because the app this runs as is
+  deliberately not granted the `workflows` permission. If the only real fix is
+  in a workflow file, make NO changes and say that in your final summary; a
+  human will make it by hand. Spending the attempt on work that cannot land
+  costs one of a bounded number of tries and fixes nothing.
 - If the failure looks unrelated to this branch (flaky test, infrastructure),
   make NO changes and explain that conclusion in your final summary — a human
   will take over; guessing wastes the attempt.
