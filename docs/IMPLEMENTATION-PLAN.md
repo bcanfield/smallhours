@@ -384,8 +384,10 @@ DESIGN specifies. What the rollout found instead was in the seams.
 > JSON for a week, and the reason and work summary now reach the comment.
 >
 > **Left for the maintainer, registered as debt.** The Fixer App cannot push
-> `.github/workflows/*` (`fixer-app-cannot-push-workflows`) — a grant-vs-declare
-> -unsupported fork that touches ADR 0001, and the reason #214 is still open.
+> `.github/workflows/*` — a grant-vs-declare-unsupported fork that touches
+> ADR 0001, and the reason #214 is still open. **Decided 2026-08-01 by
+> [ADR 0013](adr/0013-workflow-files-stay-human.md)**: declared unsupported, so
+> the debt entry is retired and the prompts and GETTING-STARTED carry the rule.
 > The babysitter's own two blind spots are in `babysitter-prompt-not-in-repo`.
 > `sweep-reeval-trusts-workflow-name` had its payoff trigger fire for real and
 > was dodged consumer-side; it stays open. Undecided and not registered: `v1`
