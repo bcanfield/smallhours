@@ -39,6 +39,11 @@ _sh_v_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # context, so it does not need the whole log to know what it did.
 SH_VERIFY_LOG_LINES="${SH_VERIFY_LOG_LINES:-200}"
 
+# Wall-clock ceiling on the on-disk probe in _verify_diagnose. Overridable only
+# so the suite can force the cut-short branch deterministically; no consumer has
+# a reason to set it.
+SH_VERIFY_PROBE_SECONDS="${SH_VERIFY_PROBE_SECONDS:-8}"
+
 # Set by verify_gate to the final red output, or empty when the gate passed or
 # none was configured. implement.sh writes it to sh_verify_report_path for
 # open-pr.sh to surface.
@@ -141,16 +146,22 @@ _verify_diagnose() { # missing
   # self-bootstrapping toolchain lands, not $HOME. Symlinks count — a package
   # manager's shim usually is one.
   #
+  # `/usr/local/bin` and `/usr/local/lib` rather than `/usr/local`: on a hosted
+  # runner that directory carries whole toolchains (`.ghcup`, `share`) and a
+  # depth-6 walk of it did not finish in EIGHT SECONDS on a bare
+  # ubuntu-24.04 — measured by the gate-environment job on this probe's first
+  # run. The two subdirectories that can hold an executable cost nothing.
+  #
   # Bounded by its own watchdog rather than by `timeout`, which macOS does not
-  # ship: one of these roots is normally a package store holding hundreds of
-  # thousands of files, and a courtesy probe on an already-failed path must not
-  # be the slowest thing in the run. A search that gets cut short reports
-  # nothing found, which is the same conclusion it would have reached by being
-  # wrong quickly — so the line says the search was bounded.
-  for r in "$HOME/.local" "$HOME/.cache" "$HOME/.npm" "$HOME/.config" /usr/local "$PWD"; do
+  # ship: a consumer's package store holds hundreds of thousands of files, and a
+  # courtesy probe on an already-failed path must not be the slowest thing in the
+  # run.
+  for r in "$HOME/.local" "$HOME/.cache" "$HOME/.npm" "$HOME/.config" \
+           /usr/local/bin /usr/local/lib "$PWD"; do
     [ -d "$r" ] && roots+=("$r")
   done
   found=""
+  local t0=$SECONDS cut=0
   if [ "${#roots[@]}" -gt 0 ]; then
     found="$( {
       find "${roots[@]}" -maxdepth 6 -name "$missing" \( -type f -o -type l \) -print &
@@ -159,14 +170,20 @@ _verify_diagnose() { # missing
       # pipe, and the reader cannot see end-of-input until EVERY writer exits —
       # so a search that finished in milliseconds would still cost the full
       # timeout, every time.
-      ( sleep 8; kill "$_f" 2>/dev/null ) >/dev/null 2>&1 & _w=$!
+      ( sleep "$SH_VERIFY_PROBE_SECONDS"; kill "$_f" 2>/dev/null ) >/dev/null 2>&1 & _w=$!
       wait "$_f"; kill "$_w" 2>/dev/null
     } 2>/dev/null | head -n 5 )" || true
   fi
+  # A search that ran out of time found nothing AND proved nothing, and the two
+  # must never read the same. "Not there" is what tells a consumer the failure is
+  # theirs to fix; a timeout that says it is the probe lying with a straight face.
+  [ $(( SECONDS - t0 )) -ge "$SH_VERIFY_PROBE_SECONDS" ] && cut=1
   if [ -n "$found" ]; then
     sh_log "verify: diagnose:   on disk: $(printf '%s' "$found" | tr '\n' ' ')"
+  elif [ "$cut" -eq 1 ]; then
+    sh_log "verify: diagnose:   on disk: INCONCLUSIVE — the search was cut off at ${SH_VERIFY_PROBE_SECONDS}s under ${roots[*]}"
   else
-    sh_log "verify: diagnose:   on disk: not found by a bounded search of ${roots[*]:-<no readable roots>}"
+    sh_log "verify: diagnose:   on disk: not found under ${roots[*]:-<no readable roots>}"
   fi
 
   # 3. Claude Code's shell snapshot, read-only and never depended on. ADR 0011
@@ -193,10 +210,15 @@ _verify_diagnose() { # missing
   fi
 
   # The one line a reader needs. Which of the two worlds this is decides whether
-  # anything is ours to fix at all.
+  # anything is ours to fix at all — so a probe that could not finish gets its own
+  # verdict rather than borrowing the confident one.
   if [ -n "$found" ] || [ -n "${resolved:-}" ]; then
     sh_log "verify: diagnose: it EXISTS but no shell the gate can reach has it — \
 report this on smallhours#29; the gate could have run this."
+  elif [ "$cut" -eq 1 ]; then
+    sh_log "verify: diagnose: could not tell whether it exists here — the search did \
+not finish. Make the verify command resolve its own entry point (ADR 0012); if you \
+believe the tool IS on this runner, say so on smallhours#29."
   else
     sh_log "verify: diagnose: nothing on this runner provides it, so no shell could \
 have run it. Make the verify command resolve its own entry point (ADR 0012)."

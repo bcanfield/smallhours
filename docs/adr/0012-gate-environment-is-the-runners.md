@@ -74,6 +74,13 @@ outlived the agent's process (the contract's) — and they settle the snapshot
 question with a measurement instead of the inference above. Log only: the pull
 request gets a remedy, not a dump.
 
+The disk search is bounded by wall clock, so it has a **third** verdict: a search
+that was cut off says so and withholds judgement. Absence of evidence is what
+tells a consumer the failure is theirs to fix, and a timeout is not that. The
+`gate-environment` job established this is not hypothetical — a depth-6 walk of
+`/usr/local` did not finish in eight seconds on a *bare* runner, before any
+consumer's package store existed.
+
 ## Consequences
 
 - The gate is only as good as the consumer's one line, and a consumer who writes

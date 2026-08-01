@@ -160,7 +160,12 @@ case_banner "the gate could not run — the command's own executable is missing"
 # turns and $2.22 rewriting code that was already correct. The agent cannot
 # change the shell the gate runs in, so re-entry can never succeed here.
 printf 'version: 1\nverify: "sh-no-such-tool-xyz --check"\n' > "$FIX/unres.yml"
-gate "$FIX/unres.yml"
+# An empty HOME, so the on-disk probe searches only small system roots and
+# reaches a verdict rather than timing out on whatever this machine keeps in
+# ~/.npm — the assertion below is about which verdict, not about how fast the
+# developer's package cache is.
+mkdir -p "$FIX/home-clean"
+gate "$FIX/unres.yml" "$FIX/home-clean"
 [ "$GATE_RC" -eq 0 ] && ok "returns 0 — an unrunnable gate never stalls the issue" || bad "returned $GATE_RC"
 case "$(wc -l < "$ARGV" | tr -d ' ')" in
   0) ok "never re-enters — no Claude stage is spent on an environment fault" ;;
@@ -203,6 +208,27 @@ case "$OUT" in
   *) bad "wrong verdict for a tool that is on disk: $OUT" ;;
 esac
 case "$(wc -l < "$ARGV" | tr -d ' ')" in 0) ok "diagnosing costs no Claude re-entry" ;; *) bad "re-entered while diagnosing" ;; esac
+
+case_banner "a search that ran out of time says so instead of claiming absence"
+# The gate-environment job caught this on the probe's first run: a depth-6 walk
+# of /usr/local did not finish in 8s on a BARE ubuntu-24.04, so the probe
+# reported "not found" having proved nothing — and the verdict line went on to
+# tell the consumer the failure was theirs. A timeout and an absence must never
+# read the same, because only one of them is evidence.
+export SH_VERIFY_PROBE_SECONDS=0
+gate "$FIX/unres.yml" "$FIX/home-planted"
+unset SH_VERIFY_PROBE_SECONDS
+case "$OUT" in
+  *"on disk: INCONCLUSIVE"*) ok "says the search was cut off, not that the tool is absent" ;;
+  *"not found under"*) bad "a cut-off search claimed the tool does not exist: $OUT" ;;
+  *) bad "no on-disk line at all: $OUT" ;;
+esac
+case "$OUT" in
+  *"could not tell whether it exists here"*) ok "verdict withholds judgement rather than blaming the consumer" ;;
+  *"nothing on this runner provides it"*) bad "drew the confident verdict from an unfinished search: $OUT" ;;
+  *) bad "no verdict line: $OUT" ;;
+esac
+case "$UNRESOLVED" in sh-no-such-tool-xyz) ok "classification is unaffected by the probe's outcome" ;; *) bad "classification changed: '$UNRESOLVED'" ;; esac
 
 case_banner "diagnosing never aborts the run"
 # implement.sh runs `set -euo pipefail` and sources this file, so a probe that
