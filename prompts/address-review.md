@@ -15,6 +15,10 @@ Rules:
   the code or, where that's impossible, keep the current behaviour and note why
   in your final summary.
 - Keep changes scoped to the review. Do not rewrite unrelated code.
+- You CANNOT change anything under `.github/workflows/`: the push is rejected by
+  GitHub itself, because the app this runs as is deliberately not granted the
+  `workflows` permission. If a reviewer asks for one, make no such edit and say
+  so in your final summary — a human will make it by hand.
 - Re-run the repository's tests/linters after your changes.
 - Do NOT push, do NOT open or merge pull requests, do NOT change branches or
   remotes. Leave your work in the working tree — the system commits and pushes.
