@@ -181,13 +181,19 @@ _verify_diagnose() { # missing
   # A search that ran out of time found nothing AND proved nothing, and the two
   # must never read the same. "Not there" is what tells a consumer the failure is
   # theirs to fix; a timeout that says it is the probe lying with a straight face.
-  [ $(( SECONDS - t0 )) -ge "$SH_VERIFY_PROBE_SECONDS" ] && cut=1
+  local took=$(( SECONDS - t0 ))
+  [ "$took" -ge "$SH_VERIFY_PROBE_SECONDS" ] && cut=1
+  # The duration is part of what the probe SAYS, not something a reader derives
+  # from log timestamps: anything that buffers this output — a `cat` of captured
+  # stderr, an Actions log group — stamps every line at the same instant and the
+  # headroom becomes invisible. It is the only warning that the budget is about
+  # to stop sufficing, and a consumer's own log deserves it too.
   if [ -n "$found" ]; then
-    sh_log "verify: diagnose:   on disk: $(printf '%s' "$found" | tr '\n' ' ')"
+    sh_log "verify: diagnose:   on disk (${took}s): $(printf '%s' "$found" | tr '\n' ' ')"
   elif [ "$cut" -eq 1 ]; then
     sh_log "verify: diagnose:   on disk: INCONCLUSIVE — the search was cut off at ${SH_VERIFY_PROBE_SECONDS}s under ${roots[*]}"
   else
-    sh_log "verify: diagnose:   on disk: not found under ${roots[*]:-<no readable roots>}"
+    sh_log "verify: diagnose:   on disk (${took}s of ${SH_VERIFY_PROBE_SECONDS}s): not found under ${roots[*]:-<no readable roots>}"
   fi
 
   # 3. Claude Code's shell snapshot, read-only and never depended on. ADR 0011

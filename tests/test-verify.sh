@@ -199,8 +199,8 @@ printf 'version: 1\nverify: "sh-planted-tool-xyz"\nverify_reentries: 0\n' > "$FI
 gate "$FIX/planted.yml" "$FIX/home-planted"
 case "$UNRESOLVED" in sh-planted-tool-xyz) ok "still classified as could-not-run" ;; *) bad "not classified: '$UNRESOLVED'" ;; esac
 case "$OUT" in
-  *"on disk: $FIX/home-planted/.local/share/probe-bin/sh-planted-tool-xyz"*)
-    ok "names where the tool actually is" ;;
+  *"on disk ("*"$FIX/home-planted/.local/share/probe-bin/sh-planted-tool-xyz"*)
+    ok "names where the tool actually is, and how long looking took" ;;
   *) bad "the on-disk probe did not find a planted tool: $OUT" ;;
 esac
 case "$OUT" in
