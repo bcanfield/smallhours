@@ -37,6 +37,11 @@ edges_blocked_by_refs() { # owner/repo
       '- '*|'* '*) item="${line#??}" ;;
       *) continue ;;
     esac
+    # A task list ("- [ ] #12") is still a list item. Without this the first
+    # token is `[`, which fails closed and blocks the issue forever.
+    case "$item" in
+      '[ ]'*|'[x]'*|'[X]'*) item="${item#???}"; item="${item# }" ;;
+    esac
     tok="${item%% *}"
     case "$tok" in
       '#'*)

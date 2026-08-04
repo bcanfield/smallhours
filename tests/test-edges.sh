@@ -33,6 +33,12 @@ eq "full section parse" \
 eq "no section -> no refs" "" "$(printf 'Just a body.\n- #4\n' | edges_blocked_by_refs o/r)"
 eq "malformed number is bad" "bad:#12abc" "$(printf '## Blocked by\n- #12abc\n' | edges_blocked_by_refs o/r)"
 eq "case-insensitive heading" "ok:5" "$(printf '## blocked by\n- #5\n' | edges_blocked_by_refs o/r)"
+eq "task list items are list items (mediamtx-connect#305)" \
+   "$(printf 'ok:304\nok:305\nok:306')" \
+   "$(printf '## Blocked by\n- [ ] #304 — trailing prose\n- [x] #305\n* [X] #306\n' \
+      | edges_blocked_by_refs o/r)"
+eq "a checked box does not smuggle a bad ref past the parser" "bad:[y]" \
+   "$(printf '## Blocked by\n- [y] #7\n' | edges_blocked_by_refs o/r)"
 
 echo "case: edges_promotable"
 entries='[
