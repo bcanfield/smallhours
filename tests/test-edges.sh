@@ -47,6 +47,19 @@ entries='[
 eq "no edges + all-cleared promote; open/not_planned/bad/mixed do not" \
    "$(printf '1\n3')" "$(edges_promotable <<< "$entries")"
 
+echo "case: edges_held"
+eq "every non-promotable issue is named, with what holds it" \
+   "$(printf '#2 held: blocked by #1 (open)\n#4 held: blocked by #1 (closed not_planned)\n#5 held: unresolved `## Blocked by` reference — see the comment on the issue\n#6 held: blocked by #2 (open)')" \
+   "$(edges_held <<< "$entries")"
+eq "promotable issues are never held" "" \
+   "$(edges_held <<< '[{"number":1,"bad":false,"blocked_by":[]},
+                       {"number":3,"bad":false,"blocked_by":[{"number":1,"state":"closed","state_reason":"completed"}]}]')"
+eq "multiple live blockers are all named" \
+   '#7 held: blocked by #1 (open), #2 (closed not_planned)' \
+   "$(edges_held <<< '[{"number":7,"bad":false,"blocked_by":[{"number":1,"state":"open","state_reason":null},
+                                                             {"number":2,"state":"closed","state_reason":"not_planned"},
+                                                             {"number":3,"state":"closed","state_reason":"completed"}]}]')"
+
 echo "case: edges_plan_changed"
 eq "not_planned blocker flags its dependent" \
    "$(printf '4\t#1 ')" "$(edges_plan_changed <<< "$entries")"

@@ -108,6 +108,18 @@ main() {
   done
   sh_log "dispatch: max_concurrent=$K, agent-working=$working, free slots=$slots, promotable: $(printf '%s' "$promotable" | tr '\n' ' ')"
 
+  # Name what holds every queued-but-not-promotable issue. Without this, a
+  # queue held entirely on edges logs an empty `promotable:` and nothing else,
+  # which reads exactly like a loop that never saw the label.
+  local held num
+  while IFS= read -r held; do
+    [ -n "$held" ] || continue
+    num="${held%% *}"; num="${num#\#}"
+    # Ejected issues left the queue above; they are not "held".
+    case " $ejected " in *" $num "*) continue ;; esac
+    sh_log "dispatch: $held"
+  done < <(edges_held <<< "$entries")
+
   if [ "$slots" -le 0 ]; then
     sh_log "dispatch: no free slots — nothing to promote"
     exit 0

@@ -68,6 +68,29 @@ edges_promotable() {
     | .number ] | sort | .[]'
 }
 
+# ── Pure: why a queued issue is NOT promotable ───────────────────────────────
+# Same stdin as edges_promotable. One line per held issue, naming what holds
+# it: "#295 held: blocked by #292 (open)". The inverse of edges_promotable —
+# every queued issue appears in exactly one of the two.
+#
+# ADR 0006 rules out an issue-side signal (no marker label, no summary
+# comment); this is the run-log side, where "promotable: <empty>" alone left no
+# way to tell a blocked queue from a broken loop.
+edges_held() {
+  jq -r '.[]
+    | select(((.bad // false)) or (any(.blocked_by[]?;
+        .state != "closed" or .state_reason != "completed")))
+    | "#\(.number) held: " + (
+        if (.bad // false)
+        then "unresolved `## Blocked by` reference — see the comment on the issue"
+        else "blocked by " + ([ .blocked_by[]
+               | select(.state != "closed" or .state_reason != "completed")
+               | "#\(.number) (\(if .state == "closed"
+                                 then "closed \(.state_reason // "?")"
+                                 else .state end))" ] | join(", "))
+        end)'
+}
+
 # ── Pure: plan-change detection (06-3) ───────────────────────────────────────
 # Same stdin as edges_promotable. Prints "dependent<TAB>#blocker blocker-title"
 # for every queued issue with a blocker closed as NOT_PLANNED — a plan change:
