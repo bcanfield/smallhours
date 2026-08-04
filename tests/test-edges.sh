@@ -34,6 +34,33 @@ eq "no section -> no refs" "" "$(printf 'Just a body.\n- #4\n' | edges_blocked_b
 eq "malformed number is bad" "bad:#12abc" "$(printf '## Blocked by\n- #12abc\n' | edges_blocked_by_refs o/r)"
 eq "case-insensitive heading" "ok:5" "$(printf '## blocked by\n- #5\n' | edges_blocked_by_refs o/r)"
 
+# Heading and bullet FORM must not decide scheduling. Each of these was a
+# silent unblock: the section was written, the parser did not see it, and the
+# dependent dispatched against a tree its blocker had not touched.
+eq "trailing colon on the heading" "ok:5" \
+   "$(printf '## Blocked by:\n- #5\n' | edges_blocked_by_refs o/r)"
+eq "all-caps heading" "ok:5" \
+   "$(printf '## BLOCKED BY\n- #5\n' | edges_blocked_by_refs o/r)"
+eq "any heading level, not just h2" "ok:5" \
+   "$(printf '### Blocked by\n- #5\n' | edges_blocked_by_refs o/r)"
+eq "indented and + bullets are list items" "$(printf 'ok:5\nok:6')" \
+   "$(printf '## Blocked by\n  - #5\n+ #6\n' | edges_blocked_by_refs o/r)"
+
+# The other direction: a subsection must END the section. It used to leak, and
+# reconcile POSTs whatever leaks as a real native dependency.
+eq "an h3 subsection does not leak phantom edges" "ok:5" \
+   "$(printf '## Blocked by\n- #5\n### Notes\n- #99\n' | edges_blocked_by_refs o/r)"
+eq "a sibling h2 still ends the section" "ok:5" \
+   "$(printf '## Blocked by\n- #5\n## Summary\n- #99\n' | edges_blocked_by_refs o/r)"
+eq "a different heading is still not an edge section (ADR 0006)" "" \
+   "$(printf '## Dependencies\n- #5\n' | edges_blocked_by_refs o/r)"
+eq "task list items are list items (mediamtx-connect#305)" \
+   "$(printf 'ok:304\nok:305\nok:306')" \
+   "$(printf '## Blocked by\n- [ ] #304 — trailing prose\n- [x] #305\n* [X] #306\n' \
+      | edges_blocked_by_refs o/r)"
+eq "a checked box does not smuggle a bad ref past the parser" "bad:[y]" \
+   "$(printf '## Blocked by\n- [y] #7\n' | edges_blocked_by_refs o/r)"
+
 echo "case: edges_promotable"
 entries='[
   {"number": 1, "bad": false, "blocked_by": []},
