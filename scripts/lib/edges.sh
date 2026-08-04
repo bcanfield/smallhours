@@ -27,14 +27,29 @@ _sh_edges_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # same-repo ref (#N or a full issue URL of this repo), "bad:<token>" for
 # anything else (typo, cross-repo — unsupported in v1). Non-list lines in the
 # section are ignored; no section means no output.
+#
+# Every rule below is deliberately generous about FORM, because the two ways
+# this can be wrong are not symmetric. Refusing a ref that was written costs a
+# stall someone can see (#305). Failing to see a section that was written
+# dispatches a dependent against a tree its blocker never touched, silently —
+# the failure ADR 0006 exists to prevent. So: any heading level, any case, an
+# optional trailing colon, any bullet marker, and any indentation.
 edges_blocked_by_refs() { # owner/repo
   local repo="$1" line item tok n
   awk '
-    /^##[[:space:]]/ { insec = ($0 ~ /^##[[:space:]]+[Bb]locked[[:space:]]+[Bb]y[[:space:]]*$/); next }
+    # Reset at EVERY heading, not just h2 — otherwise a "### Notes" subsection
+    # under "## Blocked by" keeps leaking its list items into the edge set, and
+    # reconcile POSTs them as real native dependencies.
+    /^#+[[:space:]]/ {
+      insec = (tolower($0) ~ /^#+[[:space:]]+blocked[[:space:]]+by[[:space:]]*:?[[:space:]]*$/)
+      next
+    }
     insec { print }
   ' | while IFS= read -r line; do
+    # A nested or indented item is still an item.
+    line="${line#"${line%%[![:space:]]*}"}"
     case "$line" in
-      '- '*|'* '*) item="${line#??}" ;;
+      '- '*|'* '*|'+ '*) item="${line#??}" ;;
       *) continue ;;
     esac
     # A task list ("- [ ] #12") is still a list item. Without this the first
