@@ -84,6 +84,34 @@ case_banner "non-label keys are untouched by mapping"
 [ "$(run_lib "$FIX/map.yml" 'config_max_concurrent')" = "3" ] \
   && ok "max_concurrent default intact" || bad "unrelated key broken"
 
+case_banner "state transitions skip a CLOSED issue (mediamtx-connect#295)"
+run_state() { ( . "$_dir/../scripts/lib/state.sh" 2>/dev/null || exit 90; eval "$1" ) }
+[ "$(run_state 'state_transition_action OPEN')" = "apply" ] \
+  && ok "OPEN -> apply" || bad "open issue not transitioned"
+[ "$(run_state 'state_transition_action CLOSED')" = "skip" ] \
+  && ok "CLOSED -> skip (a shipped issue is not handed back)" || bad "closed issue stamped"
+# Fail toward acting: refusing to move a live issue on a transient API error
+# strands it, which is worse than a stray label on a closed one.
+[ "$(run_state 'state_transition_action ""')" = "apply" ] \
+  && ok "unreadable state -> apply" || bad "empty state skipped the transition"
+[ "$(run_state 'state_transition_action closed')" = "apply" ] \
+  && ok "only a definite CLOSED skips" || bad "lowercase matched the skip"
+
+case_banner "a queued implement re-checks for an open agent PR (the #324 race)"
+run_common() { ( . "$_dir/../scripts/lib/common.sh" 2>/dev/null || exit 90; eval "$1" ) }
+branches() { printf 'agent/issue-304\nagent/issue-295-r2\nagent/issue-12\n'; }
+branches | run_common 'sh_has_agent_pr_for_issue 295' \
+  && ok "a retry branch counts as this issue's PR" || bad "-rK branch missed"
+printf 'agent/issue-295\n' | run_common 'sh_has_agent_pr_for_issue 295' \
+  && ok "the plain branch counts" || bad "plain branch missed"
+printf 'agent/issue-304\nagent/issue-12\n' | run_common 'sh_has_agent_pr_for_issue 295' \
+  && bad "matched an unrelated issue" || ok "unrelated issues do not match"
+# The prefix trap: #29 must not be seen as #295's PR, nor #2950 as #295's.
+printf 'agent/issue-2950\n' | run_common 'sh_has_agent_pr_for_issue 295' \
+  && bad "matched a longer issue number" || ok "#2950 is not #295"
+printf '' | run_common 'sh_has_agent_pr_for_issue 295' \
+  && bad "matched with no open PRs" || ok "no open agent PRs -> fresh dispatch"
+
 echo
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]
