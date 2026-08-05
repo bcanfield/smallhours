@@ -2,7 +2,9 @@
 
 # smallhours
 
-> The best ideas happen away from the keyboard.
+> The lamp is low. The room has gone quiet.
+> Somewhere a branch opens, tests turn green, a pull request waits for morning.
+> None of it needs you awake.
 
 smallhours turns labeled issues into pull requests you review. You write the
 issue and you press merge. Claude Code does the part in between, unattended,
