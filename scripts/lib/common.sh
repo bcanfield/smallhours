@@ -121,6 +121,20 @@ sh_issue_from_pr() { # pr-number
   printf '%s' "$n"
 }
 
+# Pure half, testable offline: does this issue already have an open agent PR?
+# stdin is the head branch names of the open `agent` PRs, one per line.
+#
+# Same question implement_guard asks in the workflow, in the same shape — the
+# point is that it can be asked a SECOND time from inside the per-issue
+# concurrency group. The guard job carries no concurrency group, so its verdict
+# is computed at event time while the `implement` job it gates queues behind
+# `smallhours-issue-N`. mediamtx-connect#295 opened a second PR from that gap:
+# guard said go at 22:22 with no PR in existence, implement started at 23:01
+# holding a verdict 20 minutes older than the PR the first run had opened.
+sh_has_agent_pr_for_issue() { # issue-number   (branch names on stdin)
+  grep -Eq "^agent/issue-$1(-|$)"
+}
+
 # Branch name for an issue's agent work. Attempt 1 -> agent/issue-N;
 # retries -> agent/issue-N-rK (fresh branch, never force-push seen history).
 sh_agent_branch() { # issue-number [attempt]

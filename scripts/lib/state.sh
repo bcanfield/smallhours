@@ -33,16 +33,46 @@ state_current() { # issue-number
     --jq '.labels[].name' | grep -Fxf <(state_labels_resolved) || true
 }
 
+# Pure half, testable offline: apply a transition to an issue whose GitHub
+# state is $1, or skip it?
+#
+# A CLOSED issue is finished, and the state axis describes work in flight.
+# resolve-conflict stamped mediamtx-connect#295 `ready-for-human` 46 minutes
+# after it merged and shipped, because a stale duplicate PR for it hit the
+# give-up path — a done issue advertising that it needs a human.
+#
+# ONLY a definite "CLOSED" skips. An unreadable state (API hiccup, empty
+# output) applies, because silently dropping a transition on a live issue
+# strands it in whatever state it was in, and a stranded live issue costs more
+# than a stray label on a closed one.
+state_transition_action() { # issue-github-state
+  case "$1" in
+    CLOSED) printf 'skip\n' ;;
+    *)      printf 'apply\n' ;;
+  esac
+}
+
 # Move an issue to exactly one state label. Takes the CANONICAL name and
 # resolves it through the labels: mapping at this choke point — callers never
 # see repo label strings. Adds the target first (so the issue is never
 # momentarily label-less), then strips every OTHER state label present.
 # Idempotent: re-setting the current state is a no-op that still heals drift.
+#
+# The closed-issue check lives HERE rather than in each caller for the reason
+# this file exists: it is the one choke point, so one guard covers all 19 call
+# sites. cancel.sh keeps its own copy — that one also suppresses a comment,
+# which this cannot see.
 state_set_issue() { # issue-number new-state(canonical)
-  local issue="$1" canonical="$2" want repo
+  local issue="$1" canonical="$2" want repo gh_state
   repo="$(sh_repo)"
   _sh_is_state_label "$canonical" || sh_die "not a state label: '$canonical'"
   want="$(label_for "$canonical")" || sh_die "label mapping failed for '$canonical'"
+
+  gh_state="$(gh issue view "$issue" --repo "$repo" --json state --jq .state 2>/dev/null || true)"
+  if [ "$(state_transition_action "$gh_state")" = "skip" ]; then
+    sh_log "issue #$issue is closed — skipping transition to $canonical"
+    return 0
+  fi
 
   # Add the target label. --add-label is idempotent on GitHub's side.
   gh issue edit "$issue" --repo "$repo" --add-label "$want" >/dev/null
