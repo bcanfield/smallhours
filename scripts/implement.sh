@@ -73,6 +73,18 @@ main() {
   [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || sh_die "CLAUDE_CODE_OAUTH_TOKEN not set"
   config_load || sh_die "unreadable .smallhours.yml — refusing to run on defaults"
 
+  # Ask implement_guard's question again, now that we hold the per-issue
+  # concurrency lock. The guard job has no concurrency group, so a run that
+  # queued behind `smallhours-issue-N` starts with a verdict computed before
+  # the run ahead of it opened a PR. Not a give-up: nothing failed, the
+  # dispatch is simply stale, so exit clean and leave the issue alone.
+  if gh pr list --repo "$repo" --state open --label "$(label_for agent)" \
+       --json headRefName --jq '.[].headRefName' \
+     | sh_has_agent_pr_for_issue "$issue"; then
+    sh_log "implement: #$issue already has an open agent PR — stale dispatch, nothing to do"
+    exit 0
+  fi
+
   if [ -z "$attempt" ]; then
     attempt="$(git ls-remote --heads origin "agent/issue-${issue}*" \
                  | awk '{print $2}' | sed 's#^refs/heads/##' \
